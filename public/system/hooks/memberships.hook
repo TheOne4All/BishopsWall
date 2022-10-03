@@ -1,0 +1,37 @@
+<?php
+
+class Memberships extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allMembers = $this->get_record('persons')->go();
+        $allTitles = $this->get_record('title')->go();
+        $this->with('allMembers', $allMembers)->show('resources/church/memberships/index');
+    }
+
+    public function add()
+    {
+        $this->add_record('persons', $_POST)->go();
+        $this->with('success', 'Member Added Successfully!')->redirect('memberships/index');
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('persons', $_POST)->go();
+        $this->with('danger', 'Member Deleted Successfully!')->redirect('memberships/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('persons', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Member Updated Successfully!')->redirect('memberships/index');
+    }
+}

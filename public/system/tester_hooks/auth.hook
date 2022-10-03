@@ -1,0 +1,563 @@
+<?php
+
+use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\PHPMailer;
+
+class Auth extends Processor
+{
+    public function __construct()
+    {
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/PHPMailer.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/Exception.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/SMTP.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/paystack.lib';
+
+        $this->helpers = new Helpers();
+        $this->mail = new PHPMailer(true);
+        $this->paystack = new Paystack();
+    }
+
+    public function signin($uniqueId = null, $registration = null)
+    {
+        FYNX_APP['installation'] == false ? $this->show('resources/pages/installer') : null;
+        if (isset($_SESSION['authenticated']) && $_SESSION['authenticated'] == true) {
+            $this->redirect('dashboard/index');
+        }
+        $getOrgData = $this->get_record('ci_org', 'name, unique_id, img')->where('unique_id', $uniqueId)->limit(1)->go();
+        $uniqueId = !empty($getOrgData) && count($getOrgData) == 1 ? $getOrgData[0]['unique_id'] : 'JISCHOOL';
+        $orgImg = !empty($getOrgData) && count($getOrgData) == 1 ? $getOrgData[0]['img'] : null;
+        $this->with('uniqueId', $uniqueId)->with('orgImg', $orgImg)->with('registration', $registration)->show('resources/pages/auth/signin');
+    }
+
+    public function verify_user_signin()
+    {
+        if (isset($_SESSION['authenticated']) && $_SESSION['authenticated'] == true) {
+            $this->redirect('dashboard/index');
+        } else {
+            extract($_POST);
+            $uniqueId = ($uniqueId == null || empty($uniqueId)) ? 'JISCHOOL' : $uniqueId;
+            $getUserResult = $this->get_record('ci_user', 'user_id, org_id, user_email, user_pass, user_role')->where('user_email', $user_email)->and_where('is_active', '1')->and_where('org_id', $uniqueId)->limit(1)->go();
+            if (!empty($getUserResult)) {
+                if ($getUserResult[0]['user_pass'] == hash("sha512", md5($user_pass))) {
+                    switch ($getUserResult[0]['user_role']) {
+                        case 3:
+                            $filter_array = 'firstname, lastname, middlename, img';
+                            $table = 'ci_person';
+                            break;
+
+                        default:
+                            $filter_array = 'firstname, lastname, middlename, img, courses_designation';
+                            $table = 'ci_staff';
+                            break;
+                    }
+                    // Get personal data of user
+                    $getPersonData = $this->get_record($table, $filter_array)->where('org_id', $uniqueId)->and_where('user_id', $getUserResult[0]['user_id'])->limit(1)->go();
+                    $_SESSION['user_info'] = [
+                        'user_id' => $getUserResult[0]['user_id'],
+                        'IP' => $this->helpers->get_client_IP(),
+                        'user_role' => $getUserResult[0]['user_role'],
+                        'user_email' => $user_email,
+                        'fullname' => $getPersonData[0]['lastname'] . ', ' . $getPersonData[0]['firstname'] . ' ' . $getPersonData[0]['middlename'],
+                        'img' => $getPersonData[0]['img'],
+                        'courses_designation' => isset($getPersonData[0]['courses_designation']) ? $getPersonData[0]['courses_designation'] : null,
+                        'org_id' => $getUserResult[0]['org_id'],
+                    ];
+                    // Get system settings data of user
+                    $getOrgData = $this->get_record('ci_org')->where('unique_id', $uniqueId)->limit(1)->go();
+                    $_SESSION['org'] = [
+                        'unique_id' => $uniqueId,
+                        'email' => $getOrgData[0]['email'],
+                        'default_template' => $getOrgData[0]['default_template'],
+                        'default_row_per_page' => $getOrgData[0]['default_row_per_page'],
+                        'default_theme' => $getOrgData[0]['default_theme'],
+                        'license_package' => $getOrgData[0]['license_package'],
+                        'license_status' => !is_null($getOrgData[0]['license_end_date']) && strtotime(date('Y-m-d H:i:s')) > strtotime($getOrgData[0]['license_end_date']) ? 'expired' : 'active',
+                        'img' => $getOrgData[0]['img'],
+                    ];
+                    // Get package feature settings data of account
+                    $getPackageData = $this->get_record('ci_license_package')->where('name', $getOrgData[0]['license_package'])->limit(1)->go();
+                    $_SESSION['package'] = json_decode(FynxCryptor::decrypt($getPackageData[0]['features'], FYNX_CRYPTO_KEY), true);
+                    // get admin path session
+                    $_SESSION['admin_path'] = $getUserResult[0]['user_role'] == 1 || $_SESSION['user_info']['user_role'] == 4 ? 'admin' : 'auth';
+                    //get session status of user
+                    $getSessionResult = $this->get_record('ci_user_session')->where('user_id', $_SESSION['user_info']['user_id'])->go();
+                    if ($getSessionResult == true) {
+                        $this->show('resources/pages/auth/sessionexist');
+                    } else {
+                        /* Register the current Sessions on the database */
+                        $result = $this->register_login_session();
+                        if ($result == true) {
+                            $_SESSION['log']['note'] = 'Signed-In Successfully!';
+                            $this->add_record('ci_log', $_SESSION['log'])->go();
+                            $this->redirect('dashboard/index');
+                        } else {
+                            $this->with('danger', 'Authentication Failed!')->redirect('auth/signin/' . $uniqueId);
+                        }
+                    }
+                } else {
+                    $this->with('danger', 'Wrong Password!')->redirect('auth/signin/' . $uniqueId);
+                }
+
+            } else {
+                $this->with('danger', 'Email Doesn\'t Exist!')->redirect('auth/signin/' . $uniqueId);
+            }
+        }
+    }
+
+    public function verify_session_signin(): bool
+    {
+        /* Check that the Session has been started */
+        $this->delete_record('ci_user_session')->where('user_id', $_SESSION['user_info']['user_id'])->go();
+        $result = $this->register_login_session();
+        if ($result == true) {
+            $this->redirect('dashboard/index');
+        } else {
+            $this->with('danger', 'Authentication Failed!')->redirect('auth/signin');
+        }
+    }
+
+    /* Logout the current user */
+    public function signout($notice = '')
+    {
+        /* If there is no logged in user, do nothing */
+        if (!isset($_SESSION['user_info']['user_id'])) {
+            $this->redirect('auth/signin');
+        }
+
+        /* Reset the account-related properties */
+
+        unset($_SESSION['user_info']);
+        unset($_SESSION['authenticated']);
+        /* If there is an open Session, remove it from the account_sessions table */
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            /* Delete query */
+            $session_array = [
+                'session_id' => session_id(),
+            ];
+            switch ($notice) {
+                case 'expired':
+                    $_SESSION['log']['note'] = 'Session Expired!';
+                    break;
+                case 'disconnected':
+                    $_SESSION['log']['note'] = 'Connected from Another Location!';
+                    break;
+
+                default:
+                    $_SESSION['log']['note'] = 'Signed-Out Successfully!';
+                    $this->delete_record('ci_user_session', $session_array)->go();
+                    break;
+            }
+            $uniqueId = $_SESSION['log']['org_id'];
+            $notice = $_SESSION['log']['note'];
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            unset($_SESSION['log']);
+            session_destroy();
+            $this->with('success', $notice)->redirect('auth/signin/' . $uniqueId);
+        }
+    }
+
+    /* Saves the current Session ID with the account ID */
+    private function register_login_session()
+    {
+        /* Check that a Session has been started */
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            /*     Use a REPLACE statement to:
+            - insert a new row with the session id, if it doesn't exist, or...
+            - update the row having the session id, if it does exist.
+             */
+            $user_session = [
+                'session_id' => session_id(),
+                'org_id' => $_SESSION['user_info']['org_id'],
+                'user_id' => $_SESSION['user_info']['user_id'],
+            ];
+
+            $_SESSION['log'] = [
+                'org_id' => $_SESSION['user_info']['org_id'],
+                'user_id' => $_SESSION['user_info']['user_id'],
+                'user_role' => $_SESSION['user_info']['user_role'],
+                'IP' => $_SESSION['user_info']['IP'],
+                'name' => $_SESSION['user_info']['fullname'],
+                'note' => '',
+            ];
+            $_SESSION['login_time'] = date('Y-m-d h:i:s');
+            $_SESSION['last_active_time'] = time();
+            $_SESSION['session_id'] = $user_session['session_id'];
+            $_SESSION['authenticated'] = true;
+            return $this->replace_record('ci_user_session', $user_session)->go();
+        }
+    }
+
+    // /* Temporal Until user.lib */
+    // public function idletime($idletime, $url = 'auth/signout')
+    // {
+    //     $session_life = time() - $_SESSION['last_active_time'];
+    //     if ($session_life > $idletime):
+    //         $this->redirect('auth/signout');
+    //     endif;
+    //     $_SESSION['last_active_time'] = time();
+    // }
+
+    public function register($licensePackage = 'free')
+    {
+        $allPaymentGateways = $this->get_record('ci_settings_payment', 'name,img,note')->where('is_active', 1)->and_where('org_id', 'JISCHOOL')->go();
+        isset($_SESSION['authenticated']) && $_SESSION['authenticated'] == true ? $this->redirect('dashboard/index') : $this->with('licensePackage', $licensePackage)->with('allPaymentGateways', $allPaymentGateways)->show('resources/pages/auth/register');
+    }
+
+    public function verify_registration()
+    {
+        if (!isset($_POST) || empty($_POST)) {
+            $this->with('danger', 'Invalid Post Data!')->redirect('auth/register/' . $license_package);
+        } else {
+            extract($_POST);
+            // Billing Cycle calculation values
+            if ($license_package != 'free') {
+                if (isset($billing_cycle)) {
+                    switch ($billing_cycle) {
+                        case '1':
+                            $billing_cycle_value = 1;
+                            break;
+                        case '2':
+                            $billing_cycle_value = 4;
+                            break;
+                        case '3':
+                            $billing_cycle_value = 12;
+                            break;
+                        case '4':
+                            $billing_cycle_value = 24;
+                            break;
+
+                        default:
+                            $billing_cycle_value = 12;
+                            break;
+                    }
+                } else {
+                    $this->with('danger', 'No Billing Cycle Value!')->redirect('auth/register/' . $license_package);
+                }
+            }
+            $_SESSION['org_array'] = [
+                'id' => $this->guidv4(),
+                'unique_id' => $unique_id,
+                'type_id' => $type_id,
+                'name' => $name,
+                'email' => $email,
+                'license_package' => $license_package,
+                'license_start_date' => date('Y-m-d H:i:s'),
+                'license_end_date' => $license_package != 'free' ? isset($billing_cycle_value) && $billing_cycle_value == 1 ? date('Y-m-d H:i:s', strtotime('+' . $billing_cycle_value . ' month')) : date('Y-m-d H:i:s', strtotime('+' . $billing_cycle_value . ' months')) : null,
+            ];
+            $_SESSION['user_array'] = [
+                'user_id' => $this->guidv4(),
+                'user_pass' => hash("sha512", md5($password)),
+                'user_phone' => 'NIL',
+                'user_role' => 2,
+                'user_name' => $firstname . $lastname,
+                'user_email' => $email,
+                'org_id' => $unique_id,
+            ];
+            $_SESSION['staff_array'] = [
+                'user_id' => $_SESSION['user_array']['user_id'],
+                'firstname' => $firstname,
+                'lastname' => $lastname,
+                'role_id' => 2,
+                'dob' => date("Y-m-d"),
+                'address' => 'NIL',
+                'email' => $email,
+                'phone' => 'NIL',
+                'employee_id' => 'NIL',
+                'org_id' => $unique_id,
+                'date_of_joining' => date("Y-m-d"),
+            ];
+            // validate for existing unique ID
+            $getOrgValidation = $this->get_record('ci_org', 'unique_id')->where('unique_id', $unique_id)->go();
+            if (!empty($getOrgValidation)) {
+                $this->with('danger', 'Unique ID already Exist!')->redirect('auth/register/' . $license_package);
+            }
+            // validate for duplicate user email
+            $getUserValidation = $this->get_record('ci_user', 'user_email')->where('user_email', $email)->go();
+            if (!empty($getUserValidation)) {
+                $this->with('danger', 'Email Address already Exist!')->redirect('auth/register/' . $license_package);
+            }
+            // Payment gateway transaction
+            if ($license_package == 'business' || $license_package == 'entreprise') {
+                // verify payment gateway details and country conversion rate
+                if (isset($payment_gateway)) {
+                    $paymentSettings = $this->get_record('ci_settings_payment')->where('name', $payment_gateway)->and_where('org_id', 'JISCHOOL')->and_where('is_active', 1)->limit(1)->go();
+                    if (empty($paymentSettings)) {$this->with('danger', 'Payment Settings Unavailable!')->redirect('auth/register/' . $license_package);}
+                    $conversionRate = $this->get_record('ci_country', 'rate,currency_code')->where('currency_code', $paymentSettings[0]['currency'])->limit(1)->go();
+                    if (empty($conversionRate[0]['rate'])) {$this->with('danger', 'Conversion Rate is Empty!')->redirect('auth/register/' . $license_package);}
+                    $paymentSettings[0]['currency'] == $conversionRate[0]['currency_code'] ? $conversionRate[0]['rate'] = 1 : null;
+                    $getLicensePackage = $this->get_record('ci_license_package')->where('name', $license_package)->limit(1)->go();
+                    // selected payment gateway
+                    switch ($payment_gateway) {
+                        case 'paystack':
+                            $_SESSION['payment_details_array'] = [
+                                'Content_Type' => 'Content-Type: application/json',
+                                'license_package' => ucfirst($getLicensePackage[0]['name']),
+                                'callback_url' => FYNX_PUBLIC['url'] . 'auth/payment_authorize_registration',
+                                'Ref_id' => $this->guidv4() . date('YmdHis'),
+                                'Plan_amt' => round((float) $getLicensePackage[0]['amount'] * $billing_cycle * 100) * $conversionRate[0]['rate'],
+                                'email' => $email,
+                                'currency' => $paymentSettings[0]['currency'],
+                                'conversion_rate' => $conversionRate[0]['rate'],
+                                'conversion_currency' => $conversionRate[0]['currency_code'],
+                                'channel' => 'paystack',
+                                'secret_key' => $paymentSettings[0]['secret_key'],
+                            ];
+                            $transaction = $this->paystack->Initialize_Transaction($_SESSION['payment_details_array']);
+                            $response = $this->paystack->Execute_Transaction($transaction);
+                            $decoded_json_response = json_decode($response, true);
+                            // var_dump($decoded_json_response);
+                            if ($decoded_json_response['status'] == false || $decoded_json_response['status'] == 0) {
+                                $this->with('danger', $decoded_json_response['message'])->redirect('auth/register/' . $license_package);
+                            } else {
+                                $this->paystack->Authorize_Payment($response);
+                            }
+                            break;
+                        case 'paypal':
+                            $_SESSION['payment_details_array'] = [
+                                'business' = $paymentSettings[0]['username'];
+                                'return' => FYNX_PUBLIC['url'] . 'auth/paystack_authorize_registration',
+                                'cancel_return' = $this->with('danger', 'Registration was Unsuccessful!')->redirect('auth/register/' . $license_package);
+                                'item_name' => ucfirst($getLicensePackage[0]['name']),
+                                'ref_id' => $this->guidv4() . date('YmdHis'),
+                                'amount' => round((float) $getLicensePackage[0]['amount'] * $billing_cycle * 100) * $conversionRate[0]['rate'],
+                                'email' => $email,
+                                'currency_code' => $paymentSettings[0]['currency'],
+                                'conversion_rate' => $conversionRate[0]['rate'],
+                                'conversion_currency' => $conversionRate[0]['currency_code'],
+                                'channel' => 'paystack',
+                                'secret_key' => $paymentSettings[0]['secret_key'],
+                            ];
+                            $transaction = $this->paystack->Initialize_Transaction($_SESSION['payment_details_array']);
+                            $response = $this->paystack->Execute_Transaction($transaction);
+                            $decoded_json_response = json_decode($response, true);
+                            // var_dump($decoded_json_response);
+                            if ($decoded_json_response['status'] == false || $decoded_json_response['status'] == 0) {
+                                $this->with('danger', $decoded_json_response['message'])->redirect('auth/register/' . $license_package);
+                            } else {
+                                $this->paystack->Authorize_Payment($response);
+                            }
+                            break;
+                    }
+                } else {
+                    $this->with('danger', 'Payment Gateway Unavailable!')->redirect('auth/register/' . $license_package);
+                }
+            } else {
+                $this->success_registration();
+            }
+        }
+    }
+
+    public function payment_authorize_registration()
+    {
+        extract($_GET);
+        if (!empty($trxref) && $trxref == $_SESSION['payment_details_array']['Ref_id']) {
+            $this->success_registration();
+        } else {
+            $this->with('danger', 'Registration was Unsuccessful!')->redirect('auth/register/' . $license_package);
+        }
+    }
+
+    public function success_registration()
+    {
+        $validate_insert = [];
+        $org_insert = $this->add_record('ci_org', $_SESSION['org_array'])->go();
+        $user_insert = $this->add_record('ci_user', $_SESSION['user_array'])->go();
+        $staff_insert = $this->add_record('ci_staff', $_SESSION['staff_array'])->go();
+        array_push($validate_insert, $org_insert);
+        array_push($validate_insert, $user_insert);
+        array_push($validate_insert, $staff_insert);
+        if (in_array(false, $validate_insert)) {
+            $this->delete_record('ci_org')->where('unique_id', $_SESSION['org_array']['unique_id'])->go();
+            $this->delete_record('ci_user', ['user_id' => $_SESSION['staff_array']['user_id']])->and_where('org_id', $_SESSION['org_array']['unique_id'])->go();
+            $this->delete_record('ci_staff', ['user_id' => $_SESSION['staff_array']['user_id']])->and_where('org_id', $_SESSION['org_array']['unique_id'])->go();
+            $this->with('danger', 'Registration was Unsuccessful!')->redirect('auth/register/' . $_SESSION['org_array']['license_package']);
+        } else {
+            // From email address and name
+            $this->mail->From = 'donotreply@thecheckit.com';
+            $this->mail->FromName = "DoNotReply";
+            // To address and name
+            $this->mail->addAddress($_SESSION['staff_array']['email']);
+            // Send HTML or Plain Text email
+            $this->mail->isHTML(true);
+            $this->mail->Subject = "Registration Information";
+            $this->mail->Body = '
+            <div style="margin: 100px; padding: 20px; background-color: #F5F5F5;">
+                <div style="width: 100%; margin-bottom: 20px;"><h3>Auth Credentials</h3></div>
+                <div style="width: 100%; margin-bottom: 10px;"><b>Username</b>: <em>' . $_SESSION['staff_array']['email'] . '</em></div>
+                <div style="width: 100%; margin-bottom: 10px;"><b>Password</b>: <em>' . $_SESSION['user_array']['user_pass'] . '</em></div>
+                <div style="width: 100%; margin-bottom: 10px;"><em>Note: Thank you for using CheckIt</em></div>
+            </div>';
+            // Send mail
+            try {
+                $this->mail->send();
+                $mail_status = '<em class="bold">Mail Sent: </em>';
+            } catch (Exception $e) {
+                $mail_status = '<em class="text-warning bold">Mailer Error: </em>';
+            }
+
+            $unique_id = $_SESSION['org_array']['unique_id'];
+            $_SESSION['log'] = [
+                'org_id' => $_SESSION['org_array']['unique_id'],
+                'user_id' => $_SESSION['staff_array']['user_id'],
+                'user_role' => 2,
+                'IP' => $this->helpers->get_client_IP(),
+                'name' => $_SESSION['staff_array']['lastname'] . ", " . $_SESSION['staff_array']['firstname'],
+                'note' => 'Registration was Successfully!',
+            ];
+            // Amount conversion for different payment gateways
+            switch ($_SESSION['payment_details_array']['channel']) {
+                case 'paystack':
+                    $_SESSION['payment_details_array']['Plan_amt'] = $_SESSION['payment_details_array']['Plan_amt'] / 100;
+                    break;
+            }
+            // Create transaction payment data
+            if ($_SESSION['org_array']['license_package'] != 'free') {
+                $transaction = [
+                    'reference' => $_SESSION['payment_details_array']['Ref_id'],
+                    'name' => $_SESSION['log']['name'],
+                    'email' => $_SESSION['staff_array']['email'],
+                    'unique_id' => $_SESSION['org_array']['unique_id'],
+                    'amount' => $_SESSION['payment_details_array']['Plan_amt'],
+                    'currency' => strtoupper($_SESSION['payment_details_array']['currency']),
+                    'conversion_rate' => $_SESSION['payment_details_array']['conversion_rate'],
+                    'conversion_currency' => strtoupper($_SESSION['payment_details_array']['conversion_currency']),
+                    'package' => $_SESSION['payment_details_array']['license_package'],
+                    'channel' => $_SESSION['payment_details_array']['channel'],
+                    'expire_at' => $_SESSION['org_array']['license_end_date'],
+                    'status' => 'completed',
+                ];
+                $this->add_record('ci_transactions_payment', $transaction)->go();
+                unset($_SESSION['payment_details_array']);
+            }
+            unset($_SESSION['org_array']);
+            unset($_SESSION['user_array']);
+            unset($_SESSION['staff_array']);
+            $this->with('success', $mail_status . $_SESSION['log']['note'])->redirect('auth/signin/' . $unique_id . '/1');
+        }
+
+    }
+
+    public function lockscreen()
+    {
+        $this->show('resources/pages/auth/lockscreen');
+    }
+
+    public function reset($uniqueId = null)
+    {
+        is_null($uniqueId) || $uniqueId == 'JISCHOOL' ? $this->redirect('auth/signin') : null;
+        if (isset($_SESSION['authenticated']) && $_SESSION['authenticated'] == true) {
+            $this->redirect('dashboard/index');
+        }
+        $getOrgData = $this->get_record('ci_org', 'name, img')->where('unique_id', $uniqueId)->limit(1)->go();
+        if (empty($getOrgData) || is_null($getOrgData)) {
+            $this->redirect('auth/signin');
+        }
+        $orgImg = !empty($getOrgData) && count($getOrgData) == 1 ? $getOrgData[0]['img'] : null;
+        $this->with('uniqueId', $uniqueId)->with('orgImg', $orgImg)->show('resources/pages/auth/reset');
+    }
+
+    public function reset_password_email()
+    {
+        extract($_POST);
+        is_null($uniqueId) || empty($uniqueId) || $uniqueId == 'JISCHOOL' ? $this->redirect('auth/signin') : null;
+        $getOrgData = $this->get_record('ci_org', 'email')->where('unique_id', $uniqueId)->limit(1)->go();
+        if (empty($getOrgData) || is_null($getOrgData)) {
+            $this->redirect('auth/signin');
+        }
+        $getUserData = $this->get_record('ci_user', 'user_id, user_email')->where('org_id', $uniqueId)->and_where('user_email', $user_email)->limit(1)->go();
+        if (empty($getUserData) || is_null($getUserData)) {
+            $this->with('danger', 'E-mail does not Exist!')->redirect('auth/signin/' . $uniqueId);
+        }
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            /*     Use a REPLACE statement to:
+            - insert a new row with the session id, if it doesn't exist, or...
+            - update the row having the session id, if it does exist.
+             */
+            $reset_password = [
+                'token_id' => session_id(),
+                'org_id' => $uniqueId,
+                'email' => $user_email,
+            ];
+            $this->replace_record('ci_reset_password', $reset_password)->go();
+        }
+        session_destroy();
+        // Get email settings data of user
+        $getMailSettings = $this->get_record('ci_settings_mail')->where('org_id', $uniqueId)->limit(1)->go();
+        // If SMTP method is enabled
+        if (!empty($getMailSettings) && $getMailSettings[0]['mail_method'] == 2) {
+            // Enable SMTP debugging.
+            $this->mail->SMTPDebug = 0;
+            // Set PHPMailer to use SMTP.
+            $this->mail->isSMTP();
+            // Set SMTP host name
+            $this->mail->Host = $getMailSettings[0]['smtp_server'];
+            // Set this to true if SMTP host requires authentication to send email
+            $this->mail->SMTPAuth = true;
+            // Provide username and password
+            $this->mail->Username = $getMailSettings[0]['smtp_username'];
+            $this->mail->Password = FynxCryptor::decrypt($getMailSettings[0]['smtp_password'], FYNX_CRYPTO_KEY);
+            // If SMTP requires TLS encryption then set it
+            !empty($getMailSettings[0]['ssl_tls']) ? $this->mail->SMTPSecure = FynxCryptor::decrypt($getMailSettings[0]['ssl_tls'], FYNX_CRYPTO_KEY) : null;
+            // Set TCP port to connect to
+            $this->mail->Port = $getMailSettings[0]['smtp_port'];
+        }
+
+        // From email address and name
+        $this->mail->From = $getOrgData[0]['email'];
+        $this->mail->FromName = "Administrator";
+        // To address and name
+        $this->mail->addAddress($user_email);
+        // Send HTML or Plain Text email
+        $this->mail->isHTML(true);
+        $this->mail->Subject = "Reset Password";
+        $this->mail->Body = '
+            <div style="margin: 100px; padding: 20px; background-color: #F5F5F5;">
+                <div style="width: 100%; margin-bottom: 20px;"><h3>Password Reset URL information</h3></div>
+                <div style="width: 100%; margin-bottom: 10px;"><b>Username</b>: <em>' . $user_email . '</em></div>
+                <div style="width: 100%; margin-bottom: 10px;"><em>Note: Please <a href="' . FYNX_PUBLIC['url'] . '/auth/verify_reset_password/' . $uniqueId . '/' . $reset_password['token_id'] . '" target="_blank"><b>Click Here</b></a> to change your password. Thank you</em></div>
+            </div>';
+        // Send mail
+        // $mail_status = !$this->mail->send() ? "Mailer Error: " : "Mail Sent: ";
+        try {
+            $this->mail->send();
+            $alert_bg = 'success';
+            $mail_status = "Check E-mail to Confirm Reset!";
+        } catch (Exception $e) {
+            $alert_bg = 'danger';
+            $mail_status = "Mailer Error: E-mail not Sent!";
+        }
+        $this->with($alert_bg, $mail_status)->redirect('auth/signin/' . $uniqueId);
+    }
+
+    public function verify_reset_password($uniqueId = null, $tokenId = null)
+    {
+        $getOrgData = $this->get_record('ci_org', 'name, img')->where('unique_id', $uniqueId)->limit(1)->go();
+        empty($tokenId) || is_null($uniqueId) || $uniqueId == 'JISCHOOL' || empty($getOrgData) || is_null($getOrgData) ? $this->redirect('auth/signin') : null;
+        $getTokenResult = $this->get_record('ci_reset_password')->where('token_id', $tokenId)->and_where('org_id', $uniqueId)->limit(1)->go();
+        if (empty($getTokenResult)) {
+            $this->with('danger', 'Token does not Exist!')->redirect('auth/signin/' . $uniqueId);
+        }
+        $orgImg = !empty($getOrgData) && count($getOrgData) == 1 ? $getOrgData[0]['img'] : null;
+        $this->with('uniqueId', $uniqueId)->with('tokenId', $tokenId)->with('email', $getTokenResult[0]['email'])->with('orgImg', $orgImg)->show('resources/pages/auth/reset_password');
+    }
+
+    public function reset_password()
+    {
+        extract($_POST);
+        if (!empty($new_pass) && ($new_pass === $confirm_pass)) {
+            $user_array['user_pass'] = hash("sha512", md5($new_pass));
+            $user_update = $this->update_record('ci_user', $user_array)->where('user_email', $email)->and_where('org_id', $uniqueId)->go();
+            switch ($user_update) {
+                case false:
+                    $this->with('danger', 'Reset Password was Unsuccessful!')->redirect('auth/verify_reset_password/' . $uniqueId . '/' . $tokenId);
+                    break;
+                default:
+                    $this->delete_record('ci_reset_password')->where('org_id', $uniqueId)->and_where('email', $email)->go();
+                    $this->with('success', 'Reset Password Successfully!')->redirect('auth/signin/' . $uniqueId);
+                    break;
+            }
+        }
+        $this->with('danger', 'Passwords not Equal!')->redirect('auth/verify_reset_password/' . $uniqueId . '/' . $tokenId);
+
+    }
+}

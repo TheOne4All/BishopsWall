@@ -1,0 +1,94 @@
+<?php
+
+class Dashboard extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if (isset($_SESSION['org']['license_status']) && $_SESSION['org']['license_status'] == 'expired') {$this->redirect('dashboard/index/expired');}
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        unset($_SESSION['test_session']);
+    }
+
+    public function index()
+    {
+        $_SESSION['user_info']['user_role'] != 3 ? $is_admin = 1 : $is_admin = 0;
+        if ($_SESSION['user_info']['user_role'] == 1) {$is_admin = "NIL";}
+
+        if (!isset($_SESSION['list_menu_group']) || !isset($_SESSION['user_permissions'])) {
+            $getRolePermissions = in_array($_SESSION['user_info']['user_role'], explode(',', '1,2,3')) ? false : $this->get_record('ci_roles_permissions')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('role_id', $_SESSION['user_info']['user_role'])->go();
+            $listMenuGroup = $this->get_record('ci_modules_main')->where('is_admin', $is_admin)->and_where('is_active', '1')->go();
+            if (session_status() == PHP_SESSION_ACTIVE) {
+                $_SESSION['list_menu_group'] = $listMenuGroup;
+                $_SESSION['user_permissions'] = $getRolePermissions;
+            }
+        }
+        switch ($_SESSION['user_info']['user_role']) {
+            case '3':
+                $this->user();
+                break;
+            case '1':
+                $this->manage();
+                break;
+
+            default:
+                $this->admin();
+                break;
+        }
+    }
+
+    private function admin()
+    {
+        $getLatestFiveLogReports = $this->get_record('ci_log')->not_where('user_role', 1)->and_where('org_id', $_SESSION['user_info']['org_id']);
+        $_SESSION['user_info']['user_role'] == 2 ? null : $getLatestFiveLogReports->and_where('user_id', $_SESSION['user_info']['user_id']);
+        $getLatestFiveLogReports = $getLatestFiveLogReports->order_by('created_at', 'DESC')->limit(5)->go();
+        $allPersons = $this->get_record('ci_person')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('is_active', '1')->order_by('created_at')->go();
+        $allStaffs = $this->get_record('ci_staff')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('is_active', '1')->order_by('created_at')->go();
+        $allQuestions = $this->get_record('ci_question')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+        $allTests = $this->get_record('ci_test')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+        $smsBalance = $this->get_record('ci_settings_sms', 'balance')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('is_active', '1')->go();
+        $this->with('allPersons', $allPersons)->with('getLatestFiveLogReports', $getLatestFiveLogReports)->with('allStaffs', $allStaffs)->with('allQuestions', $allQuestions)->with('allTests', $allTests)->with('smsBalance', $smsBalance)->show('resources/dashboard/admin');
+    }
+
+    private function user()
+    {
+        $getLatestFiveLogReports = $this->get_record('ci_log')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->order_by('created_at', 'DESC')->limit(5)->go();
+        $getUserTestAttempts = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('status', 1)->and_where('grade', 1)->order_by('performance')->limit(5)->go();
+        $allCustomGrading = $this->get_record('ci_grading')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        $this->with('getLatestFiveLogReports', $getLatestFiveLogReports)->with('getUserTestAttempts', $getUserTestAttempts)->with('allCustomGrading', $allCustomGrading)->show('resources/dashboard/user');
+    }
+
+    private function manage()
+    {
+        $getLatestFiveLogReports = $this->get_record('ci_log')->order_by('created_at', 'DESC')->limit(5)->go();
+        $allOrgs = $this->get_record('ci_org')->not_where('unique_id', 'JISCHOOL')->order_by('created_at')->go();
+        $allUsers = $this->get_record('ci_user')->not_where('org_id', 'JISCHOOL')->order_by('created_at')->go();
+        $this->with('allOrgs', $allOrgs)->with('allUsers', $allUsers)->with('getLatestFiveLogReports', $getLatestFiveLogReports)->show('resources/dashboard/manage');
+
+    }
+
+    public function change_password()
+    {
+        extract($_POST);
+        $verifyOldPass = $this->get_record('ci_user', 'user_pass,user_email,user_phone')->where('user_email', $_SESSION['user_info']['user_email'])->and_where('is_active', '1')->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $verifyPass = $verifyOldPass[0]['user_pass'] == hash("sha512", md5($oldpass)) ? true : false;
+        if ($verifyPass == true && $newpass == $confirmpass) {
+            $user_array['user_pass'] = hash("sha512", md5($newpass));
+            $user_update = $this->update_record('ci_user', $user_array)->where('user_id', $_SESSION['user_info']['user_id'])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+            switch ($user_update) {
+                case false:
+                    $this->with('danger', 'Change Password was Unsuccessful!')->redirect('dashboard/index');
+                    break;
+                default:
+                    $_SESSION['log']['note'] = 'Changed Password Successfully!';
+                    $this->add_record('ci_log', $_SESSION['log'])->go();
+                    $this->with('success', $_SESSION['log']['note'])->redirect('dashboard/index');
+                    break;
+            }
+        } else { $this->with('danger', 'Wrong Password Information!')->redirect('dashboard/index');}
+    }
+}

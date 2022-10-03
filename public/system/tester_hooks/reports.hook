@@ -1,0 +1,532 @@
+<?php
+
+class Reports extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] == 3 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+        $this->helpers = new Helpers;
+        $this->fpdf = new FPDF;
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($_SESSION['user_info']['courses_designation'])) {
+            $this->edited_courses_designation_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $_SESSION['user_info']['courses_designation']));
+        }
+    }
+
+    public function index()
+    {
+        $rolePermission = $_SESSION['user_info']['user_role'] == 1 ? '44' : '7';
+        if ($this->helpers->set_role_permission($rolePermission . ",0", "view") === true) {
+            $getSubModules = $this->get_record('ci_modules_sub')->where('main_order_id', $rolePermission)->and_where('tree_view_list', '1');
+            $_SESSION['user_info']['user_role'] == 1 ? $getSubModules->and_where('is_admin', 'NIL') : $getSubModules->and_where('is_admin', 1);
+            $getSubModules = $getSubModules->go();
+            $this->with('getSubModules', $getSubModules)->show('resources/reports/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function examinees($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,2", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allCategories = $this->get_record('ci_category', 'name')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_type', 'examinees')->order_by('base_name,created_at', 'ASC')->go();
+            $filter_array = 'admission_no, firstname, lastname, middlename, current_address, email, phone, gender, category_id, user_id, rfid_code, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'gender_search' => $gender_search,
+                    'category_search' => $category_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allPersons = $this->get_record('ci_person', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allPersons->search('') : $allPersons->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['gender_search']) || $_SESSION['search_filter']['gender_search'] == null ? null : $allPersons->and_where('gender', $_SESSION['search_filter']['gender_search']);
+                !isset($_SESSION['search_filter']['category_search']) || $_SESSION['search_filter']['category_search'] == null ? null : $allPersons->and_where('category_id', $_SESSION['search_filter']['category_search']);
+                $allPersons = $allPersons->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allCategories', $allCategories)->with('allPersons', $allPersons)->with('search_filter', $_SESSION['search_filter'])->show('resources/reports/examinees');
+            } else {
+                $allPersons = $this->get_record('ci_person')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $allFemales = $this->get_record('ci_person')->where('gender', 'Female')->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('currentPage', $currentPage)->with('allPersons', $allPersons)->with('allFemales', $allFemales)->show('resources/reports/examinees_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function staffs($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,3", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allPositions = $this->get_record('ci_roles')->not_where('role_id', 3)->and_where('role_id', 1, '!=')->go();
+            $allCategories = $this->get_record('ci_category', 'name')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_type', 'staffs')->order_by('base_name,created_at', 'ASC')->go();
+            $filter_array = 'employee_id, firstname, lastname, middlename, address, work_exp, email, phone, gender, marital_status, user_id, rfid_code, contract_type, dob, date_of_joining, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'gender_search' => $gender_search,
+                    'category_search' => $category_search,
+                    'role_search' => $role_search,
+                    'marital_status_search' => $marital_status_search,
+                    'department_search' => $department_search,
+                    'designation_search' => $designation_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allStaffs = $this->get_record('ci_staff', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allStaffs->search('') : $allStaffs->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['gender_search']) || $_SESSION['search_filter']['gender_search'] == null ? null : $allStaffs->and_where('gender', $_SESSION['search_filter']['gender_search']);
+                !isset($_SESSION['search_filter']['category_search']) || $_SESSION['search_filter']['category_search'] == null ? null : $allStaffs->and_where('contract_type', $_SESSION['search_filter']['category_search']);
+                !isset($_SESSION['search_filter']['role_search']) || $_SESSION['search_filter']['role_search'] == null ? null : $allStaffs->and_where('role_id', $_SESSION['search_filter']['role_search']);
+                !isset($_SESSION['search_filter']['marital_status_search']) || $_SESSION['search_filter']['marital_status_search'] == null ? null : $allStaffs->and_where('marital_status', $_SESSION['search_filter']['marital_status_search']);
+                !isset($_SESSION['search_filter']['department_search']) || $_SESSION['search_filter']['department_search'] == null ? null : $allStaffs->and_where('department', $_SESSION['search_filter']['department_search']);
+                !isset($_SESSION['search_filter']['designation_search']) || $_SESSION['search_filter']['designation_search'] == null ? null : $allStaffs->and_where('designation', $_SESSION['search_filter']['designation_search']);
+                $allStaffs = $allStaffs->and_where('role_id', 1, '!=')->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allCategories', $allCategories)->with('allPositions', $allPositions)->with('allStaffs', $allStaffs)->with('search_filter', $_SESSION['search_filter'])->show('resources/reports/staffs');
+            } else {
+                $allStaffs = $this->get_record('ci_staff')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('currentPage', $currentPage)->with('allStaffs', $allStaffs)->show('resources/reports/staffs_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function tests($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,5", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allCourses = $this->get_record('ci_course')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $filter_array = 'test_id, course_id, course_code, type, name, duration_time_limit, total_questions, start_date, end_date, register_list, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'course_search' => $course_search,
+                    'type_search' => $type_search,
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allTests = $this->get_record('ci_test', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allTests->search('') : $allTests->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['course_search']) || $_SESSION['search_filter']['course_search'] == null ? null : $allTests->and_where('course_code', $_SESSION['search_filter']['course_search']);
+                !isset($_SESSION['search_filter']['type_search']) || $_SESSION['search_filter']['type_search'] == null ? null : $allTests->and_where('type', $_SESSION['search_filter']['type_search']);
+                !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allTests->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+                !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allTests->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+                $allTests = $allTests->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allTests', $allTests)->with('allCourses', $allCourses)->with('search_filter', $_SESSION['search_filter'])->show('resources/reports/tests');
+            } else {
+                $allTests = $this->get_record('ci_test')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('currentPage', $currentPage)->with('allTests', $allTests)->show('resources/reports/tests_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function questions($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,4", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allCourses = $this->get_record('ci_course')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $filter_array = 'question, course_id, course_code, type, is_correct, answer_stack, question_id, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'course_search' => $course_search,
+                    'type_search' => $type_search,
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allQuestions = $this->get_record('ci_question', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allQuestions->search('') : $allQuestions->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['course_search']) || $_SESSION['search_filter']['course_search'] == null ? null : $allQuestions->and_where('course_code', $_SESSION['search_filter']['course_search']);
+                !isset($_SESSION['search_filter']['type_search']) || $_SESSION['search_filter']['type_search'] == null ? null : $allQuestions->and_where('type', $_SESSION['search_filter']['type_search']);
+                !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allQuestions->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+                !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allQuestions->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+                $allQuestions = $allQuestions->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allQuestions', $allQuestions)->with('allCourses', $allCourses)->show('resources/reports/questions');
+            } else {
+                $allQuestions = $this->get_record('ci_question')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('currentPage', $currentPage)->with('allQuestions', $allQuestions)->show('resources/reports/questions_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function attendances($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,6", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $count = 0;
+            $allAttendances = [];
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'course_search' => $course_search,
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            $firstSearchObj = 0;
+            $allCourses = $this->get_record('ci_course');
+            empty($this->edited_courses_designation_json) ? $allCourses->where('org_id', $_SESSION['user_info']['org_id']) : $allCourses->in_where('code', $this->edited_courses_designation_json)->and_where('org_id', $_SESSION['user_info']['org_id']);
+            $allCourses = $allCourses->order_by('created_at')->go();
+            $filter_array = 'test_id, course_id, course_code, type, name, img, attendance, duration_time_limit, total_questions, start_date, end_date, register_list, created_at';
+            $allTests = $this->get_record('ci_test', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allTests->search('') : $allTests->search($_SESSION['search_filter']['search_table']);
+            !isset($_SESSION['search_filter']['course_search']) || $_SESSION['search_filter']['course_search'] == null ? null : $allTests->and_where('course_code', $_SESSION['search_filter']['course_search']);
+            !isset($_SESSION['search_filter']['type_search']) || $_SESSION['search_filter']['type_search'] == null ? null : $allTests->and_where('type', $_SESSION['search_filter']['type_search']);
+            !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allTests->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+            !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allTests->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+            $allTests->and_where('type', 2, '!=')->and_where('org_id', $_SESSION['user_info']['org_id']);
+
+            // if course designation session isnt empty, create query
+            if (!empty($_SESSION['user_info']['courses_designation'])) {
+                foreach (json_decode($_SESSION['user_info']['courses_designation']) as $value) {
+                    if ($firstSearchObj == 0) {$allTests->and_where('course_code', $value);
+                        $firstSearchObj++;} else { $allTests->or_where('course_code', $value);}
+                }
+            }
+
+            $allTests = $allTests->order_by('created_at')->go();
+            if (!empty($allTests)) {
+                foreach ($allTests as $key => $test) {
+                    $getTestAttemptRecord = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('test_id', $test['test_id'])->not_where('start_date', '')->not_where('end_date', '')->go();
+                    $getTestAttendanceRecord = $this->get_record('ci_test_attempt', 'test_id')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('test_id', $test['test_id'])->not_where('start_date', '')->not_where('end_date', '')->go();
+                    $checked = is_null($getTestAttendanceRecord) ? 0 : count($getTestAttendanceRecord);
+                    $participated = is_null($getTestAttemptRecord) ? 0 : count($getTestAttemptRecord);
+                    $registered = is_null($test['register_list']) ? 0 : count(explode(',', $test['register_list']));
+                    $unchecked = $participated - $checked;
+                    $status = $registered == $participated ? 'Completed' : 'Proceeding';
+                    if ($registered == 0) {$status = 'Pending';}
+                    // if ($test['attendance'] == 1) {
+                    //     if ($unchecked != 0 && $registered != 0 && $status == 'Completed') {$status = 'Attendance';}}
+                    if (date('Y-m-d') > $test['end_date']) {$status = 'Expired';}
+                    $allAttendances[$count] = [
+                        'test_id' => $test['test_id'],
+                        'name' => $test['name'],
+                        'attendance' => $test['attendance'],
+                        'start_date' => $test['start_date'],
+                        'end_date' => $test['end_date'],
+                        'created_at' => $test['created_at'],
+                        'checked' => $checked,
+                        'registered' => $registered,
+                        'participated' => $participated,
+                        'img' => $test['img'],
+                        'register_list' => $test['register_list'],
+                        'unchecked' => $unchecked,
+                        'status' => $status,
+                    ];
+                    $count++;
+                }
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $this->with('currentPage', $currentPage)->with('allAttendances', $allAttendances)->with('allCourses', $allCourses)->with('search_filter', $_SESSION['search_filter'])->show('resources/reports/attendances');
+            } else {
+                $this->with('currentPage', $currentPage)->with('allAttendances', $allAttendances)->show('resources/reports/attendances_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function attendances_list($testId = null, $currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,24", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $getRegisteredExamineesRecord = [];
+            $countCheckout = 0;
+            is_null($testId) ? $this->redirect('reports/attendances') : null;
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+            $getTestRecord = $this->get_record('ci_test', 'name, register_list, grade_group, attendance')->where('test_id', $testId)->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+            if (!empty($getTestRecord)) {
+                $registerListArray = !empty($getTestRecord[0]['register_list']) ? explode(',', $getTestRecord[0]['register_list']) : null;
+                if (!empty($registerListArray)) {
+                    for ($i = 0; $i < count($registerListArray); $i++) {
+                        $getFullName = $this->get_record('ci_person', 'firstname, lastname, middlename, category_id');
+
+                        !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $getFullName->search('') : $getFullName->search($_SESSION['search_filter']['search_table']);
+                        $getFullName = $getFullName->and_where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $registerListArray[$i])->limit(1)->go();
+
+                        if (!empty($getFullName)) {
+                            $result = $this->get_record('ci_test_attempt')->where('test_id', $testId)->and_where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $registerListArray[$i])->limit(1)->go();
+                            if (!isset($result[0]['start_time'])) {$finishTime = '--:--:--';}
+                            if (isset($result[0]['start_time']) && !isset($result[0]['finish_time'])) {$finishTime = 'Proceeding';}
+                            if (isset($result[0]['start_time']) && isset($result[0]['finish_time'])) {$finishTime = $result[0]['finish_time'];}
+                            $countCheckout = isset($result[0]['checkout']) && !empty($result[0]['checkout']) ? $countCheckout++ : $countCheckout;
+                            $attendance = !isset($result[0]['checkout']) ? 'Attendance' : $result[0]['checkout'];
+                            $attendance = $getTestRecord[0]['attendance'] != 1 ? '--:--:--' : $attendance;
+                            $getRegisteredExamineesRecord[$i] = [
+                                'user_id' => $registerListArray[$i],
+                                'fullname' => $getFullName[0]['lastname'] . ', ' . $getFullName[0]['firstname'] . ' ' . $getFullName[0]['middlename'],
+                                'category' => $getFullName[0]['category_id'],
+                                'start_time' => !isset($result[0]['start_time']) ? 'Pending' : $result[0]['start_time'],
+                                'finish_time' => $finishTime,
+                                'checkout' => $attendance,
+                                'pause_time' => !isset($result[0]['pause_time']) ? null : $result[0]['pause_time'],
+                                'more_time' => !isset($result[0]['more_time']) ? null : $result[0]['more_time'],
+                                'total_points' => !isset($result[0]['total_points']) ? null : $result[0]['total_points'],
+                                'pending_array' => isset($result[0]['pending_array']) ? json_decode(FynxCryptor::decrypt($result[0]['pending_array'], FYNX_CRYPTO_KEY)) : null,
+                                'achieved_time' => !isset($result[0]['achieved_time']) ? '--:--:--' : $result[0]['achieved_time'],
+                                'total_is_correct' => !isset($result[0]['total_is_correct']) ? 'NIL' : $result[0]['total_is_correct'],
+                                'points' => !isset($result[0]['points']) ? 'NIL' : $result[0]['points'],
+                            ];
+                        }
+                    }
+                    array_multisort(array_column($getRegisteredExamineesRecord, 'checkout'), SORT_DESC, $getRegisteredExamineesRecord);
+                }
+                $getTestRecord = [
+                    'name' => $getTestRecord[0]['name'],
+                    'attendance' => $getTestRecord[0]['attendance'],
+                    'grade_group' => $getTestRecord[0]['grade_group'],
+                    'count_checkout' => $countCheckout,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $this->with('currentPage', $currentPage)->with('testId', $testId)->with('getTestRecord', $getTestRecord)->with('registerList', $getRegisteredExamineesRecord)->show('resources/reports/attendances_list');
+            } else {
+                $this->with('currentPage', $currentPage)->with('testId', $testId)->with('getTestRecord', $getTestRecord)->with('registerList', $getRegisteredExamineesRecord)->show('resources/reports/attendances_list_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function logs($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("7,31", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allOrgs = $this->get_record('ci_org', 'name, unique_id')->order_by('name', 'ASC')->go();
+            $filter_array = 'org_id, IP, name, note, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'tenant_search' => $_SESSION['user_info']['user_role'] == 1 ? $tenant_search : null,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allLogs = $this->get_record('ci_log', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allLogs->search('') : $allLogs->search($_SESSION['search_filter']['search_table']);
+                if ($_SESSION['user_info']['user_role'] == 1) {!isset($_SESSION['search_filter']['tenant_search']) || $_SESSION['search_filter']['tenant_search'] == null ? null : $allLogs->and_where('org_id', $_SESSION['search_filter']['tenant_search']);}
+                !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allLogs->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+                !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allLogs->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+                $_SESSION['user_info']['user_role'] == 1 ? null : $allLogs->and_where('user_role', 1, '!=')->and_where('org_id', $_SESSION['user_info']['org_id']);
+                $allLogs = $allLogs->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allLogs', $allLogs)->with('allOrgs', $allOrgs)->show('resources/reports/logs');
+            } else {
+                $allLogs = $this->get_record('ci_log')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_role', 1, '!=')->go();
+                $this->with('currentPage', $currentPage)->with('allLogs', $allLogs)->show('resources/reports/logs_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function tenants($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("44,33", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allPackages = $this->get_record('ci_license_package', 'name')->order_by('created_at', 'ASC')->go();
+            $filter_array = 'unique_id, name, email, license_package, license_start_date, license_end_date, created_at, updated_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'package_search' => $package_search,
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allOrgs = $this->get_record('ci_org', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allOrgs->search('') : $allOrgs->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['package_search']) || $_SESSION['search_filter']['package_search'] == null ? null : $allOrgs->and_where('license_package', $_SESSION['search_filter']['package_search']);
+                !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allOrgs->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+                !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allOrgs->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+                $allOrgs = $allOrgs->and_where('unique_id', 'JISCHOOL', '!=')->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allPackages', $allPackages)->with('allOrgs', $allOrgs)->show('resources/reports/tenants');
+            } else {
+                $allOrgs = $this->get_record('ci_org')->go();
+                $this->with('currentPage', $currentPage)->with('allOrgs', $allOrgs)->show('resources/reports/tenants_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function transactions($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("44,32", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $filter_array = 'reference, unique_id, name, email, package, amount, currency, status, channel, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'entry_start_search' => $entry_start_search,
+                    'entry_end_search' => $entry_end_search,
+                    'search_table' => $search_table,
+                ];
+            }
+            !isset($visualization) ? $visualization = 0 : null;
+            if ($visualization == 0) {
+                $allTransactions = $this->get_record('ci_transactions_payment', $filter_array);
+                !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allTransactions->search('') : $allTransactions->search($_SESSION['search_filter']['search_table']);
+                !isset($_SESSION['search_filter']['entry_start_search']) || $_SESSION['search_filter']['entry_start_search'] == null ? null : $allTransactions->and_where('created_at', $_SESSION['search_filter']['entry_start_search'], '>=');
+                !isset($_SESSION['search_filter']['entry_end_search']) || $_SESSION['search_filter']['entry_end_search'] == null ? null : $allTransactions->and_where('created_at', $_SESSION['search_filter']['entry_end_search'], '<=');
+                $allTransactions = $allTransactions->order_by('created_at')->go();
+                $this->with('currentPage', $currentPage)->with('allTransactions', $allTransactions)->show('resources/reports/transactions');
+            } else {
+                $allTransactions = $this->get_record('ci_transactions_payment')->go();
+                $this->with('currentPage', $currentPage)->with('allTransactions', $allTransactions)->show('resources/reports/transactions_graphical');
+            }
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function download_csv($csv_name)
+    {
+        $_POST = $this->helpers->unset_array_num_keys(unserialize($_POST['array']));
+        $this->helpers->download_csv($_POST, $csv_name . '.csv');
+    }
+
+    public function download_pdf($pdf_title)
+    {
+        $_POST = $this->helpers->unset_array_num_keys(unserialize($_POST['array']));
+        $headerDisplayed = false;
+        //Add a new page
+        $this->fpdf->AddPage();
+
+        // Set the font for the text
+        $this->fpdf->SetFont('Arial', '', 11);
+
+        // Prints a cell with given text
+        $this->fpdf->Cell(40, 1, $pdf_title);
+        $this->fpdf->Ln(10);
+        // var_dump($_POST);
+        foreach ($_POST as $key => $array) {
+            if (!$headerDisplayed) {
+                // Use the keys from $data as the titles
+                $headerTitle = array_keys($array);
+                foreach ($headerTitle as $key => $value) {
+                    $this->fpdf->Cell(30, 1, $value);
+                    // echo $value . ' - ';
+                }
+                $this->fpdf->Ln(10);
+                // echo '<br><br>';
+                $headerDisplayed = true;
+            }
+            // var_dump($headerTitle);
+            // echo '<br><br>';
+            // var_dump($array);
+            // array_push($array, $headerTitle);
+            // echo '<br><br>';
+            // var_dump($array);
+            foreach ($array as $key => $value) {
+                $this->fpdf->Cell(30, 1, $value);
+                // echo $value . ' - ';
+            }
+            $this->fpdf->Ln(10);
+            // echo '<br><br>';
+            // $this->fpdf->Cell(40, 10, json_encode($value));
+        }
+
+        // return the generated output
+        $this->fpdf->Output();
+    }
+
+    public function pause_time()
+    {
+        isset($_POST) && !empty($_POST) ? extract($_POST) : null;
+        $getTestAttemptStatus = $this->get_record('ci_test_attempt', 'status')->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        if (isset($getTestAttemptStatus[0]['status']) && $getTestAttemptStatus[0]['status'] == '0') {
+            $pauseTime = ['pause_time' => date('Y-m-d H:i:s')];
+            $pause_time_update = $this->update_record('ci_test_attempt', $pauseTime)->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+            if ($pause_time_update == true) {
+                $_SESSION['log']['note'] = 'Examinee Time Paused Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('reports/attendances_list/' . $test_id);
+            } else { $this->with('warning', 'Already Finished Test/Exam')->redirect('reports/attendances_list/' . $test_id);}
+        } else { $this->with('warning', 'Already Finished Test/Exam')->redirect('reports/attendances_list/' . $test_id);}
+    }
+
+    public function add_time()
+    {
+        isset($_POST) && !empty($_POST) ? extract($_POST) : null;
+        $getTestAttemptStatus = $this->get_record('ci_test_attempt', 'status')->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        if (isset($getTestAttemptStatus[0]['status']) && $getTestAttemptStatus[0]['status'] == '0') {
+            $moreTime = ['more_time' => $more_time];
+            $more_time_update = $this->update_record('ci_test_attempt', $moreTime)->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+            if ($more_time_update == true) {
+                $_SESSION['log']['note'] = $more_time . 'Min(s) Added Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('reports/attendances_list/' . $test_id);
+            } else { $this->with('warning', 'Already Finished Test/Exam')->redirect('reports/attendances_list/' . $test_id);}
+        } else { $this->with('warning', 'Already Finished Test/Exam')->redirect('reports/attendances_list/' . $test_id);}
+    }
+
+    public function score_mark()
+    {
+        extract($_POST);
+        for ($i = 0; $i < count($score); $i++) {
+            $total_score[$i] = intval(str_replace('/ ', '', $total_score[$i]));
+            // if score value not numeric
+            if (!is_numeric($score[$i])) {
+                $this->with('warning', 'Score Value not Numeric!')->redirect('reports/attendances_list/' . $test_id);
+            }
+            // if score value greater than total score
+            if ($score[$i] > $total_score[$i]) {
+                $this->with('warning', 'Score > Total Score Value!')->redirect('reports/attendances_list/' . $test_id);
+            }
+        }
+        $points = FynxCryptor::decrypt($points, FYNX_CRYPTO_KEY) + array_sum($score);
+        $allCustomGrading = $this->get_record('ci_grading')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_name', $grade_group)->go();
+        $maxToPercent = max(array_column($allCustomGrading, 'to_percent'));
+        $performance = round(($points / $total_points) * $maxToPercent, 2);
+        $customGrading = $this->helpers->get_test_grading($allCustomGrading, $performance);
+        $scoreMark = [
+            'points' => FynxCryptor::encrypt($points, FYNX_CRYPTO_KEY),
+            'pending_array' => FynxCryptor::encrypt('', FYNX_CRYPTO_KEY),
+            'performance' => round($performance, 2),
+            'ranking' => $customGrading['ranking'],
+            'color' => $customGrading['color'],
+            'description' => $customGrading['description'],
+            'rating' => FynxCryptor::encrypt($customGrading['rating'], FYNX_CRYPTO_KEY),
+        ];
+        $score_update = $this->update_record('ci_test_attempt', $scoreMark)->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        // var_dump($allCustomGrading);
+        if ($score_update == true) {
+            $_SESSION['log']['note'] = 'Score Points Updated Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('reports/attendances_list/' . $test_id);
+        } else { $this->with('warning', 'Update Score Points was Unsuccessful!')->redirect('reports/attendances_list/' . $test_id);}
+    }
+
+    public function remove()
+    {
+        isset($_POST) && !empty($_POST) ? extract($_POST) : null;
+        $offlineFile = FYNX_PUBLIC['media'] . 'offline-files/' . 'save_' . $_SESSION['user_info']['org_id'] . $user_id . $test_id . '.txt';
+        file_exists($offlineFile) ? $this->helpers->deleteFile($offlineFile) : null;
+        $remove_delete = $this->delete_record('ci_test_attempt')->where('user_id', $user_id)->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        if ($remove_delete == true) {
+            $_SESSION['log']['note'] = 'Removed Examinee Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('reports/attendances_list/' . $test_id);
+        } else { $this->with('warning', 'No Test/Exam Attempt')->redirect('reports/attendances_list/' . $test_id);}
+    }
+}

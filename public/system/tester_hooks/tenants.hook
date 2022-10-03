@@ -1,0 +1,125 @@
+<?php
+
+use PHPMailer\PHPMailer\PHPMailer;
+
+class Tenants extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('admin/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('admin/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] != 1 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/PHPMailer.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/Exception.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/SMTP.php';
+
+        $this->filesystem = new FynxFileSystem();
+        $this->helpers = new Helpers;
+        $this->mail = new PHPMailer(true);
+
+    }
+
+    public function index($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("42,0", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+
+            $filter_array = 'id,type_id,unique_id,reg_num,phone,email,address,country,img,name,license_package,license_start_date,license_end_date,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allCountries = $this->get_record('ci_country')->go();
+            $allPackages = $this->get_record('ci_license_package')->go();
+            $allOrgs = $this->get_record('ci_org', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allOrgs->search('') : $allOrgs->search($_SESSION['search_filter']['search_table']);
+            $allOrgs = $allOrgs->and_where('unique_id', 'JISCHOOL', '!=')->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allPackages', $allPackages)->with('allCountries', $allCountries)->with('allOrgs', $allOrgs)->show('resources/tenants/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add()
+    {
+        $_POST['id'] = $this->guidv4();
+        if (isset($_FILES['sys_logo']) && !empty($_FILES['sys_logo']['name'])) {
+            $this->filesystem->allow_overwriting();
+            $this->filesystem->set_input('sys_logo');
+            $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'front-end/');
+            $this->filesystem->set_filename($unique_id . '.%s');
+            $this->filesystem->set_upload_function("copy");
+
+            // Callback in after upload
+            $this->filesystem->set_callback_output(function ($data) {
+                $_POST['img'] = $data->filename;
+            });
+            $this->filesystem->save();
+        }
+        $tenant_insert = $this->add_record('ci_org', $_POST)->go();
+        if ($tenant_insert == false) {
+            $this->with('danger', 'Add Tenant Was Unsuccessful!')->redirect('tenants/index');
+        } else {
+            $_SESSION['log']['note'] = 'Tenant Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('tenants/index');
+        }
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        unset($_POST['id']);
+        if (isset($_FILES['sys_logo']) && !empty($_FILES['sys_logo']['name'])) {
+            $this->filesystem->allow_overwriting();
+            $this->filesystem->set_input('sys_logo');
+            $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'front-end/');
+            $this->filesystem->set_filename($unique_id . '.%s');
+            $this->filesystem->set_upload_function("copy");
+
+            // Callback in after upload
+            $this->filesystem->set_callback_output(function ($data) {
+                $_POST['img'] = $data->filename;
+            });
+            $this->filesystem->save();
+        }
+        $result = $this->update_record('ci_org', $_POST)->where('id', $id)->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Tenant was Unsuccessful!')->redirect('tenants/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Tenant Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('tenants/index');
+                break;
+        }
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_id_json));
+            $this->delete_record('ci_org')->in_where('unique_id', $edited_id_json)->go();
+            $this->delete_record('ci_user')->in_where('org_id', $edited_id_json)->go();
+        } else {
+            $this->delete_record('ci_org', $_POST)->go();
+            $this->delete_record('ci_user')->where('org_id', $unique_id)->go();
+        }
+        $_SESSION['log']['note'] = 'Tenant(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('tenants/index');
+    }
+
+}

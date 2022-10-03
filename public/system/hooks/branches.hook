@@ -1,0 +1,66 @@
+<?php
+
+class Branches extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allChurches = $this->get_record('branches')->limit(30)->go();
+        $allStructures = $this->get_record('structure')->go();
+        $this->with('allChurches', $allChurches)->with('allStructures', $allStructures)->show('resources/church/branches/index');
+    }
+
+    public function add()
+    {
+        extract($_POST);
+        $_POST['code'] .= $zone_code;
+        if (!empty($province_code)) : $_POST['code'] .= '-' . $province_code;
+        endif;
+        if (!empty($district_code)) : $_POST['code'] .= '-' . $district_code;
+        endif;
+        if (!empty($branch_code)) : $_POST['code'] .= '-' . $branch_code;
+        endif;
+        $this->add_record('branches', $_POST)->go();
+        $this->with('success', 'Branch Added Successfully!')->redirect('branches/index');
+    }
+
+    public function addStructure()
+    {
+        $this->add_record('structure', $_POST)->go();
+        $this->with('success', 'Hierarchy Added Successfully!')->with('tab', 'tab_2')->redirect('branches/index');
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('branches', $_POST)->go();
+        $this->with('danger', 'Branch Deleted Successfully!')->redirect('branches/index');
+    }
+
+    public function deleteStructure()
+    {
+        extract($_POST);
+        $this->delete_record('structure', $_POST)->go();
+        $this->with('danger', 'Hierarchy Deleted Successfully!')->with('tab', 'tab_2')->redirect('branches/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('branches', $_POST)->where('code', $code)->go();
+        $this->with('success', 'Branch Updated Successfully!')->redirect('branches/index');
+    }
+
+    public function updateStructure()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('structure', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Hierarchy Updated Successfully!')->with('tab', 'tab_2')->redirect('branches/index');
+    }
+}

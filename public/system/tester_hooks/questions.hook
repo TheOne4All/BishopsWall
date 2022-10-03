@@ -1,0 +1,143 @@
+<?php
+
+class Questions extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] == 3 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+        $this->helpers = new Helpers;
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        !is_null($_SESSION['user_info']['courses_designation']) ? $this->edited_courses_designation_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $_SESSION['user_info']['courses_designation'])) : null;
+    }
+
+    public function index($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("4,0", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allCourses = $this->get_record('ci_course');
+            empty($this->edited_courses_designation_json) ? $allCourses->where('org_id', $_SESSION['user_info']['org_id']) : $allCourses->in_where('code', $this->edited_courses_designation_json)->and_where('org_id', $_SESSION['user_info']['org_id']);
+            $allCourses = $allCourses->order_by('created_at')->go();
+            $filter_array = 'question, course_id, course_code, type, score, is_correct, answer_stack, question_id, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $firstSearchObj = 0;
+            $allQuestions = $this->get_record('ci_question', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allQuestions->search('') : $allQuestions->search($_SESSION['search_filter']['search_table']);
+            $allQuestions->and_where('org_id', $_SESSION['user_info']['org_id']);
+
+            // if course designation session isnt empty, create query
+            if (!empty($_SESSION['user_info']['courses_designation'])) {
+                foreach (json_decode($_SESSION['user_info']['courses_designation']) as $value) {
+                    if ($firstSearchObj == 0) {$allQuestions->and_where('course_code', $value);
+                        $firstSearchObj++;} else { $allQuestions->or_where('course_code', $value);}
+                }
+            }
+
+            $allQuestions = $allQuestions->order_by('created_at')->go();
+            $this->with('currentPage', $currentPage)->with('allQuestions', $allQuestions)->with('allCourses', $allCourses)->with('search_filter', $_SESSION['search_filter'])->show('resources/questions/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add()
+    {
+        // Package limit Verification
+        $allQuestions = $this->get_record('ci_question', 'created_at')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        if (count($allQuestions) >= $_SESSION['package']['questions']) {$this->with('danger', 'Package Limit Exceeded!')->redirect('questions/index');}
+
+        $is_correct = '';
+        extract($_POST);
+        unset($_POST['question_type']);
+        unset($_POST['course_id']);
+        unset($_POST['question_content']);
+        unset($_POST['score']);
+        if (isset($is_correct)) {
+            unset($_POST['is_correct']);
+        }
+
+        $answer_option_json = json_encode($_POST);
+        $is_correct_json = json_encode($is_correct);
+
+        $getCourseCode = $this->get_record('ci_course', 'code')->where('course_id', $course_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $question_array = [
+            'question_id' => $this->guidv4(),
+            'org_id' => $_SESSION['user_info']['org_id'],
+            'course_id' => $course_id,
+            'course_code' => $getCourseCode[0]['code'],
+            'type' => $question_type,
+            'score' => $score,
+            'question' => FynxCryptor::encrypt($question_content, FYNX_CRYPTO_KEY),
+            'answer_stack' => FynxCryptor::encrypt($answer_option_json, FYNX_CRYPTO_KEY),
+            'is_correct' => FynxCryptor::encrypt($is_correct_json, FYNX_CRYPTO_KEY),
+        ];
+        $question_insert = $this->add_record('ci_question', $question_array)->go();
+        if ($question_insert == false) {
+            $this->with('danger', 'Add Question Was Unsuccessful!')->redirect('questions/index');
+        } else {
+            $_SESSION['log']['note'] = 'Question Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('questions/index');
+        }
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_question_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_question_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_question_id_json));
+            $this->delete_record('ci_question')->in_where('question_id', $edited_question_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_question', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Question(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('questions/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        unset($_POST['question_id']);
+        unset($_POST['question_type']);
+        unset($_POST['course_id']);
+        unset($_POST['question_content']);
+        unset($_POST['is_correct']);
+        unset($_POST['score']);
+        $getCourseCode = $this->get_record('ci_course', 'code')->where('course_id', $course_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $answer_option_json = json_encode($_POST);
+        $is_correct_json = isset($is_correct) ? json_encode($is_correct) : null;
+        $question_array = [
+            'course_id' => $course_id,
+            'course_code' => $getCourseCode[0]['code'],
+            'question' => FynxCryptor::encrypt($question_content, FYNX_CRYPTO_KEY),
+            'score' => (float) $score,
+            'answer_stack' => FynxCryptor::encrypt($answer_option_json, FYNX_CRYPTO_KEY),
+            'is_correct' => FynxCryptor::encrypt($is_correct_json, FYNX_CRYPTO_KEY),
+        ];
+        $result = $this->update_record('ci_question', $question_array)->where('question_id', $question_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update questions was Unsuccessful!')->redirect('questions/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Question Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('questions/index');
+                break;
+        }
+    }
+}

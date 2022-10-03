@@ -1,0 +1,586 @@
+<?php
+
+class Helpers
+{
+    /*
+    |--------------------------------------------------------------------------
+    | Get Client IP
+    |--------------------------------------------------------------------------
+    |
+    | This Helps the current IP address or Local and Remote users.
+    |
+     */
+    public function get_client_IP()
+    {
+
+        // Get user IP address
+        if (isset($_SERVER['HTTP_CLIENT_IP']) && !empty($_SERVER['HTTP_CLIENT_IP'])) {
+            $ip = $_SERVER['HTTP_CLIENT_IP'];
+        } elseif (isset($_SERVER['HTTP_X_FORWARDED_FOR']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        } else {
+            $ip = (isset($_SERVER['REMOTE_ADDR'])) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0';
+        }
+
+        $ip = filter_var($ip, FILTER_VALIDATE_IP);
+        $ip = ($ip === false) ? '0.0.0.0' : $ip;
+        return $ip;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Check URL Existense
+    |--------------------------------------------------------------------------
+    |
+    | This Helps check if a URL exist or not
+    |
+     */
+    public function url_exist($url)
+    {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_NOBODY, true);
+        curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if ($code == 200) {
+            $status = true;
+        } else {
+            $status = false;
+        }
+        curl_close($ch);
+        return $status;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Get Currency Coversion
+    |--------------------------------------------------------------------------
+    |
+    | This Helps convert currency at real-time from free.currencyconverterapi.com
+    |
+     */
+    public function convertCurrency($amount, $from_currency, $to_currency)
+    {
+        $apikey = '*******';
+
+        $from_Currency = urlencode($from_currency);
+        $to_Currency = urlencode($to_currency);
+        $query = "{$from_Currency}_{$to_Currency}";
+
+        // URL para solicitar los datos
+        $json = file_get_contents("https://free.currconv.com/api/v7/convert?q={$query}&compact=ultra&apiKey={$apikey}");
+        $obj = json_decode($json, true);
+
+        $val = floatval($obj["$query"]);
+
+        $totalc = $val * $amount;
+        return number_format($totalc, 0, '', '');
+    }
+    //uncomment to test
+    // echo "1 USD equivale a ";
+    // echo convertCurrency(1, 'USD', 'COP');
+    // echo " COP";
+
+    public function currency_converter($amount, $from_Currency, $to_Currency)
+    {
+        $from_Currency = urlencode(strtoupper($from_Currency));
+        $to_Currency = urlencode(strtoupper($to_Currency));
+        $url = file_get_contents('http://free.currencyconverterapi.com/api/v3/convert?q=' . $from_Currency . '_' . $to_Currency . '&compact=ultra');
+        $json = json_decode($url, true);
+        $ratevalue = $json[$from_Currency . '_' . $to_Currency];
+        $output = $amount * $ratevalue;
+        return $output;
+    }
+
+    public function generateXML($tag_in, $value_in = "", $attribute_in = "")
+    {
+        $return = "";
+        $attributes_out = "";
+        if (is_array($attribute_in)) {
+            if (count($attribute_in) != 0) {
+                foreach ($attribute_in as $k => $v):
+                    $attributes_out .= " " . $k . "=\"" . $v . "\"";
+                endforeach;
+            }
+        }
+        return "<" . $tag_in . "" . $attributes_out . ((trim($value_in) == "") ? "/>" : ">" . $value_in . "</" . $tag_in . ">");
+    }
+
+    public function arrayToXML($array_in, $firstTag)
+    {
+        $return = "";
+        $attributes = array();
+        foreach ($array_in as $k => $v):
+            if ($k[0] == "@") {
+                // attribute...
+                $attributes[str_replace("@", "", $k)] = $v;
+            } else {
+                if (is_array($v)) {
+                    $return .= $this->generateXML($k, $this->arrayToXML($v, $firstTag), $attributes);
+                    $attributes = array();
+                } else if (is_bool($v)) {
+                $return .= $this->generateXML($k, (($v == true) ? "true" : "false"), $attributes);
+                $attributes = array();
+            } else {
+                $return .= $this->generateXML($k, $v, $attributes);
+                $attributes = array();
+            }
+        }
+
+        endforeach;
+        $return = str_replace("0>", $firstTag . ">", $return);
+        return $return;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Convert Timestamp to String
+    |--------------------------------------------------------------------------
+    |
+    | This Helps convert Timestamp (2012-10-10 09:11:45) to String (2 days ago)
+    |
+     */
+    public function time_elapsed_string($datetime, $full = false)
+    {
+        $now = new DateTime;
+        $ago = new DateTime($datetime);
+        $diff = $now->diff($ago);
+
+        $diff->w = floor($diff->d / 7);
+        $diff->d -= $diff->w * 7;
+
+        $string = array(
+            'y' => 'year',
+            'm' => 'month',
+            'w' => 'week',
+            'd' => 'day',
+            'h' => 'hour',
+            'i' => 'minute',
+            's' => 'second',
+        );
+        foreach ($string as $k => &$v) {
+            if ($diff->$k) {
+                $v = $diff->$k . ' ' . $v . ($diff->$k > 1 ? 's' : '');
+            } else {
+                unset($string[$k]);
+            }
+        }
+
+        if (!$full) {
+            $string = array_slice($string, 0, 1);
+        }
+
+        return $string ? implode(', ', $string) . ' ago' : 'just now';
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transform Time Formats
+    |--------------------------------------------------------------------------
+    |
+    | This Helps Transforms Timestamps to different TIme Formats
+    |
+     */
+
+    // Transform hours like "1:45" into the total number of minutes, "105".
+    public function hoursToMinutes($hours)
+    {
+        $minutes = 0;
+        if (strpos($hours, ':') !== false) {
+            // Split hours and minutes.
+            list($hours, $minutes) = explode(':', $hours);
+        }
+        return $hours * 60 + $minutes;
+    }
+
+    // Transform minutes like "105" into hours like "1:45".
+    public function minutesToHrsMins($minutes)
+    {
+        $hours = (int) ($minutes / 60);
+        $minutes -= $hours * 60;
+        return sprintf("%d:%02.0f", $hours, $minutes);
+    }
+
+    // Transform minutes like "1" into seconds like "60".
+    public function minutesToSecs($minutes)
+    {
+        return ($minutes * 60);
+    }
+
+    // Transform seconds like "105" into hours like "1:45:22".
+    public function secondsToHrsMinsSecs($seconds)
+    {
+        return gmdate('H:i:s', $seconds);
+    }
+
+    // Transform hours like "1:45:22" into seconds like "105".
+    public function hrsMinsSecsToSeconds($str_time)
+    {
+        $str_time = preg_replace("/^([\d]{1,2})\:([\d]{2})$/", "00:$1:$2", $str_time);
+        sscanf($str_time, "%d:%d:%d", $hours, $minutes, $seconds);
+        return $hours * 3600 + $minutes * 60 + $seconds;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Download File
+    |--------------------------------------------------------------------------
+    |
+    | This Helps download any File type.
+    |
+     */
+    public function download_file($vFilePath, $vDownloadName = "")
+    {
+        $vFilename = basename($vFilePath);
+        $vNewFilename = $vDownloadName == "" ? $vFilename : $vDownloadName;
+        $vFileType = $this->getFileType($vFilename);
+        $vContentType = $this->getContentType($vFileType);
+
+        // Fix IE bug [0]
+        $header_file = (strstr($_SERVER['HTTP_USER_AGENT'], 'MSIE')) ? preg_replace('/\./', '%2e', $vNewFilename, substr_count($vNewFilename, '.') - 1) : $vNewFilename;
+
+        // Prepare headers
+        header("Pragma: public");
+        header("Expires: 0");
+        header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
+        header("Cache-Control: public", false);
+        header("Content-Description: File Transfer");
+        header("Content-Type: " . $vContentType);
+        header("Accept-Ranges: bytes");
+        header("Content-Disposition: attachment; filename=\"" . $header_file . "\";");
+        header("Content-Transfer-Encoding: binary");
+        header("Content-Length: " . filesize($vFilePath));
+
+        set_time_limit(0);
+
+        $vBlockSize = 1048576; //1024;
+        $vDownlSpeed = 10;
+        $dlfile = fopen($vFilePath, 'r');
+        while (!feof($dlfile) && connection_status() == 0) {
+            //reset time limit for big files
+            set_time_limit(0);
+            print fread($dlfile, $vBlockSize * $vDownlSpeed);
+            flush();
+        }
+        fclose($dlfile);
+        exit();
+    }
+
+    private function getFileType($vFilename)
+    {
+        return strtolower(substr(strrchr($vFilename, "."), 1));
+    }
+
+    private function getBrowserId()
+    {
+        $browser = $_SERVER['HTTP_USER_AGENT'];
+
+        if (preg_match('/Opera(\/\| )([0-9].[0-9]{1,2})/i', $browser)) {
+            return 'OPERA';
+        } else if (preg_match('/MSIE ([0-9].[0-9]{1,2})/i', $browser)) {
+            return 'IE';
+        } else if (preg_match('/OmniWeb\/([0-9].[0-9]{1,2})/i', $browser)) {
+            return 'OMNIWEB';
+        } else if (preg_match('/(Konqueror\/)(.*)/i', $browser)) {
+            return 'KONQUEROR';
+        } else if (preg_match('/Mozilla ([0-9].[0-9]{1,2})/i', $browser)) {
+            return 'MOZILLA';
+        } else {
+            return 'OTHER';
+        }
+    }
+
+    private function getContentType($FileType = "")
+    {
+        $vBrowser = $this->getBrowserId();
+        switch ($FileType) {
+            case "exe":
+                (($vBrowser == 'IE' || $vBrowser == 'OPERA') ? ($ctype = "application/octetstream") : ($ctype = "application/octet-stream"));
+                break;
+            case "pdf":
+                $ctype = "application/pdf";
+                break;
+            case "zip":
+                $ctype = "application/zip";
+                break;
+            case "doc":
+                $ctype = "application/msword";
+                break;
+            case "xls":
+                $ctype = "application/vnd.ms-excel";
+                break;
+            case "ppt":
+                $ctype = "application/vnd.ms-powerpoint";
+                break;
+            case "gif":
+                $ctype = "image/gif";
+                break;
+            case "png":
+                $ctype = "image/png";
+                break;
+            case "wmv":
+                $ctype = "video/x-ms-wmv";
+                break;
+            case "jpe":
+            case "jpeg":
+            case "jpg":
+                $ctype = "image/jpg";
+                break;
+            case "exe":
+                $ctype = "application/octet-stream";
+                break;
+            case "zip":
+                $ctype = "application/zip";
+                break;
+            case "mp3":
+                $ctype = "audio/mpeg";
+                break;
+            case "mpg":
+                $ctype = "video/mpeg";
+                break;
+            case "avi":
+                $ctype = "video/x-msvideo";
+                break;
+            default:
+                $ctype = "application/force-download";
+                break;
+        }
+
+        return $ctype;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Download Array to CSV
+    |--------------------------------------------------------------------------
+    |
+    | This Helps download any Array to CSV File type.
+    |
+     */
+    public function download_csv($array, $vFilePath = "")
+    {
+        $vFilename = $vFilePath != "" ? basename($vFilePath) : 'auto_generated_csv.csv';
+        $f = fopen($vFilePath, "w");
+        $headerDisplayed = false;
+        foreach ($array as $line) {
+
+            // Add a header row if it hasn't been added yet
+            if (!$headerDisplayed) {
+                // Use the keys from $data as the titles
+                fputcsv($f, array_keys($line));
+                $headerDisplayed = true;
+            }
+
+            // CUSTOM - For decrypting Array values of fields in Attendance List table
+            if (isset($line['points'])) {
+                $line['points'] = !empty($line['points']) && $line['points'] != 'NIL' ? FynxCryptor::decrypt($line['points'], FYNX_CRYPTO_KEY) : 'NIL';
+            }
+            if (isset($line['pending_array'])) {
+                $line['pending_array'] = !empty($line['pending_array']) ? json_encode($line['pending_array']) : 'NIL';
+            }
+
+            // Put the data into the stream
+            fputcsv($f, (array) $line);
+        }
+        fclose($f);
+
+        // Fix IE bug [0]
+        $header_file = (strstr($_SERVER['HTTP_USER_AGENT'], 'MSIE')) ? preg_replace('/\./', '%2e', $vFilename, substr_count($vFilename, '.') - 1) : $vFilename;
+
+        if (file_exists($vFilename)) {
+            header('Pragma: public');
+            header('Expires: 0');
+            header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
+            header("Cache-Control: public", false);
+            header('Content-Description: File Transfer');
+            header('Content-Type: application/octet-stream');
+            header("Accept-Ranges: bytes");
+            header("Content-Disposition: attachment; filename=\"" . $header_file . "\";");
+            header('Content-Transfer-Encoding: binary');
+            header('Content-Length: ' . filesize($vFilename));
+            ob_get_length() ? ob_end_clean() : null;
+            flush();
+            if (readfile($vFilename)) {$this->deleteFile($vFilePath);}
+            exit();
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Group Category Arrays
+    |--------------------------------------------------------------------------
+    |
+    | This Helps format Category Grouping array items into specific groupings
+    |
+     */
+    public function get_category_grouping($array)
+    {
+
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Format Multi-Dimensional Array
+    |--------------------------------------------------------------------------
+    |
+    | This Helps format multi-dimensional arrays into a simple associative
+    | array.
+    |
+     */
+    public function unset_array_num_keys($array)
+    {
+        $array_out = [];
+        foreach ($array as $key => $value) {
+            if (is_array($value)) {
+                $array_out[$key] = $this->unset_array_num_keys($value);
+            } elseif (!is_numeric($key)) {
+                $array_out[$key] = $value;
+            }
+        }
+        return $array_out;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Get Test/Exam Grading
+    |--------------------------------------------------------------------------
+    |
+    | This Helps get the grading features from the multidimentional array of
+    | of the grading table for any test performance
+    |
+     */
+    public function get_test_grading($array, $performance)
+    {
+        $minFromPercent = min(array_column($array, 'from_percent'));
+        foreach ($array as $key => $value) {
+            $value['from_percent'] == $minFromPercent && $performance < $minFromPercent ? $value['from_percent'] = $performance : null;
+            if ($performance >= $value['from_percent'] && $performance <= $value['to_percent']) {
+                $ranking = $value['ranking'];
+                $color = $value['color'];
+                $description = $value['description'];
+                $rating = FynxCryptor::decrypt($value['rating'], FYNX_CRYPTO_KEY);
+                break;
+            } else {
+                $ranking = $color = $description = $rating = 'NIL';
+            }
+        }
+        return ['ranking' => $ranking, 'color' => $color, 'description' => $description, 'rating' => $rating];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Role Permission
+    |--------------------------------------------------------------------------
+    |
+    | This Helps to designate permissions to modules or features
+    |
+     */
+    public function set_role_permission($path, $permit = 'view')
+    {
+        if (isset($_SESSION['user_permissions']) && $_SESSION['user_permissions'] !== false) {
+            $path = explode(',', $path);
+            foreach ($_SESSION['user_permissions'] as $key => $value) {
+                if ($path[0] == $value['main_order_id'] && $path[1] == $value['sub_order_id']) {
+                    $permission = explode('-', $value['permission']);
+                    // break;
+                    // if ($permit == 'view' && $permission[0] == 1) {
+                    //     return true;
+                    // } elseif ($permit == 'add' && $permission[1] == 1) {
+                    //     return true;
+                    // } elseif ($permit == 'edit' && $permission[2] == 1) {
+                    //     return true;
+                    // } elseif ($permit == 'delete' && $permission[3] == 1) {
+                    //     return true;
+                    // } else {
+                    //     return false;
+                    // }
+
+                    switch ($permit) {
+                        case 'view':
+                            return $permission[0] == 1 ? true : false;
+                            break;
+                        case 'add':
+                            return $permission[1] == 1 ? true : false;
+                            break;
+                        case 'edit':
+                            return $permission[2] == 1 ? true : false;
+                            break;
+                        case 'delete':
+                            return $permission[3] == 1 ? true : false;
+                            break;
+                        default:
+                            return false;
+                            break;
+                    }
+                }
+            }
+        } else {
+            return true;
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Shuffle arrays
+    |--------------------------------------------------------------------------
+    |
+    | Helps Shuffle associative and non-associative array while preserving
+    | their keys and value pairs
+    |
+     */
+
+    public function shuffle_array($list)
+    {
+        if (!is_array($list)) {return $list;}
+        $keys = array_keys($list);
+        shuffle($keys);
+        $randomize = array();
+        foreach ($keys as $key) {
+            $randomize[$key] = $list[$key];
+        }
+        return $randomize;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Manage Server Test File
+    |--------------------------------------------------------------------------
+    |
+    | Create, Read, Update and Delete Files on Server
+    |
+     */
+
+    public function readFile($filePathAndName, $lineNum)
+    {
+        if (file_exists($filePathAndName)) {
+            $lines = file($filePathAndName, FILE_IGNORE_NEW_LINES);
+            return empty($lines[$lineNum]) ? null : $lines[$lineNum];
+        }
+    }
+
+    public function deleteFile($filePathAndName)
+    {
+        if (file_exists($filePathAndName)) {
+            unlink($filePathAndName);
+        }
+    }
+
+    public function manageFile($filePathAndName, $lineTotal = 1, $lineNum = null, $replaceVal = null)
+    {
+        if (!file_exists($filePathAndName)) {
+            $offline_save = fopen($filePathAndName, "a") or die("Unable to open file!");
+            for ($i = 0; $i < $lineTotal; $i++) {
+                fwrite($offline_save, "\n");
+            }
+            fclose($offline_save);
+        }
+        if ((!is_null($lineNum) || !empty($lineNum)) && (!is_null($replaceVal) || !empty($replaceVal))) {
+            $lines = file($filePathAndName, FILE_IGNORE_NEW_LINES);
+            $lines[$lineNum] = $replaceVal;
+            file_put_contents($filePathAndName, implode("\n", $lines));
+            return true;
+        } else {
+            return false;
+        }
+    }
+}

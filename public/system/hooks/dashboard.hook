@@ -1,0 +1,18 @@
+<?php
+
+class Dashboard extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allChurches = $this->get_record('branches')->go();
+        $lastChurchRecord = $this->get_record('branches')->order_by('id')->limit(1)->go();
+        $allStaffs = $this->get_record('staffs')->go();
+        $lastStaffRecord = $this->get_record('staffs')->order_by('id')->limit(1)->go();
+        $this->with('allChurches', $allChurches)->with('lastChurchRecord', $lastChurchRecord)->with('allStaffs', $allStaffs)->with('lastStaffRecord', $lastStaffRecord)->show('resources/dashboard/index');
+    }
+}

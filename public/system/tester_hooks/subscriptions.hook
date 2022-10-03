@@ -1,0 +1,104 @@
+<?php
+
+use PHPMailer\PHPMailer\PHPMailer;
+
+class Subscriptions extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('admin/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('admin/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] != 1 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/PHPMailer.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/Exception.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/SMTP.php';
+
+        $this->filesystem = new FynxFileSystem();
+        $this->helpers = new Helpers;
+        $this->mail = new PHPMailer(true);
+
+    }
+
+    public function index($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("43,0", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+
+            $filter_array = 'reference, unique_id, name, email, package, amount, currency, channel, expire_at, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allCountries = $this->get_record('ci_country')->go();
+            $allOrgs = $this->get_record('ci_org')->not_where('unique_id', 'JISCHOOL')->go();
+            $allPackages = $this->get_record('ci_license_package')->go();
+            $allPaymentGateways = $this->get_record('ci_settings_payment', 'name,img,note')->where('is_active', 1)->and_where('org_id', 'JISCHOOL')->go();
+            $allTransactions = $this->get_record('ci_transactions_payment', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allTransactions->search('') : $allTransactions->search($_SESSION['search_filter']['search_table']);
+            $allTransactions = $allTransactions->and_where('unique_id', 'JISCHOOL', '!=')->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allOrgs', $allOrgs)->with('allPaymentGateways', $allPaymentGateways)->with('allPackages', $allPackages)->with('allCountries', $allCountries)->with('allTransactions', $allTransactions)->show('resources/subscriptions/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add()
+    {
+        $_POST['id'] = $this->guidv4();
+        if (isset($_FILES['sys_logo']) && !empty($_FILES['sys_logo']['name'])) {
+            $this->filesystem->allow_overwriting();
+            $this->filesystem->set_input('sys_logo');
+            $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'front-end/');
+            $this->filesystem->set_filename($unique_id . '.%s');
+            $this->filesystem->set_upload_function("copy");
+
+            // Callback in after upload
+            $this->filesystem->set_callback_output(function ($data) {
+                $_POST['img'] = $data->filename;
+            });
+            $this->filesystem->save();
+        }
+        $tenant_insert = $this->add_record('ci_org', $_POST)->go();
+        if ($tenant_insert == false) {
+            $this->with('danger', 'Add Tenant Was Unsuccessful!')->redirect('subscriptions/index');
+        } else {
+            $_SESSION['log']['note'] = 'Tenant Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('subscriptions/index');
+        }
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        unset($_POST['reference']);
+        $result = $this->update_record('ci_transactions_payment', $_POST)->where('reference', $reference)->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Subscritpion was Unsuccessful!')->redirect('subscriptions/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Subscritpion Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('subscriptions/index');
+                break;
+        }
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('ci_transactions_payment', $_POST)->go();
+        $_SESSION['log']['note'] = 'Subscritpion Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('subscriptions/index');
+    }
+
+}

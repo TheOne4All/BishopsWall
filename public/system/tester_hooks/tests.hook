@@ -1,0 +1,151 @@
+<?php
+
+class Tests extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] == 3 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+        $this->helpers = new Helpers;
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        !is_null($_SESSION['user_info']['courses_designation']) ? $this->edited_courses_designation_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $_SESSION['user_info']['courses_designation'])) : null;
+    }
+
+    public function index($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("5,0", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allCourses = $this->get_record('ci_course');
+            empty($this->edited_courses_designation_json) ? $allCourses->where('org_id', $_SESSION['user_info']['org_id']) : $allCourses->in_where('code', $this->edited_courses_designation_json)->and_where('org_id', $_SESSION['user_info']['org_id']);
+            $allCourses = $allCourses->order_by('created_at')->go();
+            $allCategories = $this->get_record('ci_category', 'code,name')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_type', 'grades')->order_by('base_name,created_at', 'ASC')->go();
+            $allGradings = $this->get_record('ci_grading', 'group_name')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at', 'ASC')->go();
+            $allMsgTemps = $this->get_record('ci_message_tpl')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $filter_array = 'test_id, course_id, course_code, name, type, duration_time_limit, question_type_array, result_duration_date, total_questions, reminder_time_limit, start_date, end_date, start_time, end_time, register_list, randomize, attendance, custom_grade, grade, grade_group, negative_marking, negative_marker, ques_entry_date_start,	ques_entry_date_end, note, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+            $allTests = $this->get_record('ci_test', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allTests->search('') : $allTests->search($_SESSION['search_filter']['search_table']);
+            $allTests = $allTests->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $counter = 0;
+            foreach ($allTests as $key => $value) {
+                $pattern = "/[\[\]\"]/s";
+                $pattern1 = "/[\"]/s";
+                $register_list_array = !is_null($value['register_list']) ? explode(',', $value['register_list']) : null;
+                $edited_register_list_array_json = preg_replace($pattern, '', preg_replace($pattern1, "'", json_encode($register_list_array)));
+                $result = $this->get_record('ci_person', 'firstname,lastname,middlename,email,phone,user_id,admission_no')->in_where('user_id', $edited_register_list_array_json)->go();
+                array_push($allTests[$counter], $allTests[$counter]['register_list_data'] = $this->helpers->unset_array_num_keys($result));
+                $counter++;
+            }
+            $this->with('currentPage', $currentPage)->with('allTests', $allTests)->with('allGradings', $allGradings)->with('allCategories', $allCategories)->with('allCourses', $allCourses)->with('allMsgTemps', $allMsgTemps)->with('search_filter', $_SESSION['search_filter'])->show('resources/tests/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add()
+    {
+        // Package limit Verification
+        $allTests = $this->get_record('ci_test', 'created_at')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        if (count($allTests) >= $_SESSION['package']['tests']) {$this->with('danger', 'Package Limit Exceeded!')->redirect('tests/index');}
+
+        $_POST['test_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $getCourseCode = $this->get_record('ci_course', 'code')->where('course_id', $_POST['course_id'])->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $_POST['course_code'] = $getCourseCode[0]['code'];
+        if (!empty($_POST['note'])) {
+            $_POST['note'] = FynxCryptor::encrypt($_POST['note'], FYNX_CRYPTO_KEY);
+        }
+        if (isset($_POST['question_type_array'])) {
+            $_POST['question_type_array'] = json_encode($_POST['question_type_array']);
+        }
+        $test_insert = $this->add_record('ci_test', $_POST)->go();
+        if ($test_insert == false) {
+            $this->with('danger', 'Add Test Was Unsuccessful!')->redirect('tests/index');
+        } else {
+            $_SESSION['log']['note'] = 'Test Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('tests/index');
+        }
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_test_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_test_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_test_id_json));
+            $this->delete_record('ci_test')->in_where('test_id', $edited_test_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_test', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Test(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('tests/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        if (!isset($_POST['attendance'])) {$_POST['attendance'] = 0;}
+        if (!isset($_POST['randomize'])) {$_POST['randomize'] = 0;}
+        if (!isset($_POST['custom_grade'])) {$_POST['custom_grade'] = 0;}
+        if (!isset($_POST['grade'])) {$_POST['grade'] = 0;}
+        if (!isset($_POST['negative_marking'])) {$_POST['negative_marking'] = 0;}
+        if (!empty($_POST['note'])) {
+            $_POST['note'] = FynxCryptor::encrypt($note, FYNX_CRYPTO_KEY);
+        }
+        $update_grade = ['grade' => $_POST['grade'], 'custom_grade' => $_POST['custom_grade']];
+        $this->update_record('ci_test_attempt', $update_grade)->where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        $getCourseCode = $this->get_record('ci_course', 'code')->where('course_id', $_POST['course_id'])->and_where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $_POST['course_code'] = $getCourseCode[0]['code'];
+        isset($_POST['question_type_array']) ? $_POST['question_type_array'] = json_encode($_POST['question_type_array']) : $_POST['question_type_array'] = null;
+        $result = $this->update_record('ci_test', $_POST)->where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Test was Unsuccessful!')->redirect('tests/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Test Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('tests/index');
+                break;
+        }
+    }
+
+    public function manage_register()
+    {
+        extract($_POST);
+        $register_list_array = explode(',', $register_list);
+        $new_register_list = '';
+        foreach ($register_list_array as $key => $value) {
+            if (in_array($value, $user_id)) {
+                unset($register_list_array[$key]);
+            } else {
+                $new_register_list = $new_register_list . "," . $value;
+            }
+        }
+        $update_register_list = [
+            'register_list' => substr($new_register_list, 1),
+        ];
+        $result = $this->update_record('ci_test', $update_register_list)->where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Remove Examinee was Unsuccessful!')->redirect('tests/index');
+                break;
+            default:
+                $this->with('success', 'Test Register Updated Successfully!')->redirect('tests/index');
+                break;
+        }
+    }
+}

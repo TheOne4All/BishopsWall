@@ -1,0 +1,472 @@
+<?php
+
+class Checkit extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] != 3 ? $this->redirect('dashboard/index') : null;
+        // require_once FYNX_PUBLIC['system'] . 'libraries/helpers.lib';
+        $this->helpers = new Helpers;
+    }
+
+    public function index()
+    {
+        unset($_SESSION['test_session']);
+        unset($_SESSION['resume_test_data']);
+        $getUserTestList = [];
+        $count = 0;
+        $allTests = $this->get_record('ci_test')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('start_date', date('Y-m-d'), '<=')->and_where('end_date', date('Y-m-d'), '>=')->or_where('result_duration_date', date('Y-m-d'), '>')->go();
+        foreach ($allTests as $key => $test) {
+            if (in_array($_SESSION['user_info']['user_id'], explode(',', $test['register_list']))) {
+                $getTestAttemptIncomplete = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test['test_id'])->and_where('status', 0)->go();
+                $getTestAttemptComplete = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test['test_id'])->and_where('status', 1)->go();
+                $getTestAttemptIncomplete == true ? $status = 'Resume' : $status = 'Pending';
+                if ($getTestAttemptComplete == true) {
+                    $status = 'Completed';
+                    $startTime = $getTestAttemptComplete[0]['start_time'];
+                    $finishTime = $getTestAttemptComplete[0]['finish_time'];
+                    $achievedTime = $getTestAttemptComplete[0]['achieved_time'];
+                    $totalQuestions = $getTestAttemptComplete[0]['total_questions'];
+                    // $type = 1;
+                    $totalPoints = $getTestAttemptComplete[0]['total_points'];
+                    $points = $getTestAttemptComplete[0]['points'];
+                    $ranking = $getTestAttemptComplete[0]['ranking'];
+                    $color = $getTestAttemptComplete[0]['color'];
+                    $description = $getTestAttemptComplete[0]['description'];
+                    $rating = $getTestAttemptComplete[0]['rating'];
+                    $performance = $getTestAttemptComplete[0]['performance'];
+                    $pendingArray = $getTestAttemptComplete[0]['pending_array'];
+                    $createdAt = $getTestAttemptComplete[0]['created_at'];
+                    $updatedAt = $getTestAttemptComplete[0]['updated_at'];
+                }
+                if ($test['type'] != 1) {$status = 'Demo';}
+                $getUserTestList[$count] = [
+                    'test_id' => $test['test_id'],
+                    'course_id' => $test['course_id'],
+                    'course_code' => $test['course_code'],
+                    'name' => $test['name'],
+                    'img' => $test['img'],
+                    'grade' => $test['grade'],
+                    'custom_grade' => $test['custom_grade'],
+                    'duration_time_limit' => $test['duration_time_limit'],
+                    'finishTime' => isset($finishTime) ? $finishTime : null,
+                    'status' => isset($status) ? $status : null,
+                    'achievedTime' => isset($achievedTime) ? $achievedTime : null,
+                    'startTime' => isset($startTime) ? $startTime : null,
+                    'totalQuestions' => isset($totalQuestions) ? $totalQuestions : null,
+                    'totalPoints' => isset($totalPoints) ? $totalPoints : null,
+                    'type' => $test['type'],
+                    'points' => isset($points) ? $points : null,
+                    'pendingArray' => isset($pendingArray) ? $pendingArray : null,
+                    'ranking' => isset($ranking) ? $ranking : null,
+                    'color' => isset($color) ? $color : null,
+                    'description' => isset($description) ? $description : null,
+                    'rating' => isset($rating) ? $rating : null,
+                    'performance' => isset($performance) ? $performance : null,
+                    'createdAt' => isset($createdAt) ? $createdAt : null,
+                    'updatedAt' => isset($updatedAt) ? $updatedAt : null,
+                ];
+                $count++;
+            }
+            if (!empty($getTestAttemptComplete) && $getTestAttemptComplete == true) {
+                $startTime = $finishTime = $status = $updatedAt = $createdAt = $achievedTime = $pendingArray = $totalQuestions = $totalPoints = $points = $ranking = $color = $description = $rating = $performance = '';
+            }
+        }
+        $this->with('getUserTestList', $getUserTestList)->show('resources/checkit/index');
+    }
+
+    public function take_test($testId = null)
+    {
+        is_null($testId) ? $this->redirect('dashboard/index') : $testId;
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            $_SESSION['test_session'] = $testId . session_id();
+            $_SESSION['offlineFile'] = FYNX_PUBLIC['media'] . 'offline-files/' . 'save_' . $_SESSION['user_info']['org_id'] . $_SESSION['user_info']['user_id'] . $testId . '.txt';
+            $_SESSION['resume_test_data'] = null;
+        }
+        $getTest = $this->get_record('ci_test')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('test_id', $testId)->go();
+        $getTestAttempt = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $testId)->limit(1)->go();
+
+        if (empty($getTestAttempt)) {
+            empty($getTest) ? $this->with('danger', 'Wrong Test/Exam ID!')->redirect('checkit/index') : $this->with('getTest', $getTest)->show('resources/checkit/take_test');
+        } else {
+            $_SESSION['resume_test_data'] = [
+                'test_id' => $getTest[0]['test_id'],
+                'name' => $getTest[0]['name'],
+                'course_id' => $getTest[0]['course_id'],
+                'course_code' => $getTest[0]['course_code'],
+                'reminder_time' => $getTest[0]['reminder_time_limit'],
+                'total_questions' => $getTest[0]['total_questions'],
+                'randomize' => $getTest[0]['randomize'],
+                'negative_marking' => $getTest[0]['negative_marking'],
+                'negative_marker' => $getTest[0]['negative_marker'],
+                'question_type_array' => $getTest[0]['question_type_array'],
+                'start_time' => $getTest[0]['start_time'],
+                'end_time' => $getTest[0]['end_time'],
+                'ques_entry_date_start' => $getTest[0]['ques_entry_date_start'],
+                'ques_entry_date_end' => $getTest[0]['ques_entry_date_end'],
+            ];
+            $getTestAttempt[0]['status'] == 0 ? $this->redirect('checkit/test') : $this->with('info', 'Test/Exam Already Completed!')->redirect('checkit/index');
+        }
+    }
+
+    public function test()
+    {
+        $startTimeInHrsMinsSecs = date('Y-m-d H:i:s');
+        $startTimeInSecs = strtotime($startTimeInHrsMinsSecs) - time();
+        $savedTestAnswers = [];
+        if (!is_null($_SESSION['resume_test_data'])) {
+            $test_id = $_SESSION['resume_test_data']['test_id'];
+            $name = $_SESSION['resume_test_data']['name'];
+            $course_id = $_SESSION['resume_test_data']['course_id'];
+            $course_code = $_SESSION['resume_test_data']['course_code'];
+            $start_time = $_SESSION['resume_test_data']['start_time'];
+            $end_time = $_SESSION['resume_test_data']['end_time'];
+            $reminder_time = $_SESSION['resume_test_data']['reminder_time'];
+            $total_questions = $_SESSION['resume_test_data']['total_questions'];
+            $randomize = $_SESSION['resume_test_data']['randomize'];
+            $negative_marking = $_SESSION['resume_test_data']['negative_marking'];
+            $negative_marker = $_SESSION['resume_test_data']['negative_marker'];
+            $question_type_array = $_SESSION['resume_test_data']['question_type_array'];
+            $ques_entry_date_start = $_SESSION['resume_test_data']['ques_entry_date_start'];
+            $ques_entry_date_end = $_SESSION['resume_test_data']['ques_entry_date_end'];
+        }
+        if (isset($_POST) && !empty($_POST)) {
+            extract($_POST);
+            $question_type_array = FynxCryptor::decrypt($question_type_array, FYNX_CRYPTO_KEY);
+        }
+
+        if (empty($start_time) && empty($end_time)):
+            $timeValidity = 1;
+        elseif (!empty($start_time) && empty($end_time) && $startTimeInHrsMinsSecs >= $start_time):
+            $timeValidity = 1;
+        elseif (empty($start_time) && !empty($end_time) && $startTimeInHrsMinsSecs <= $end_time):
+            $timeValidity = 1;
+        elseif (!empty($start_time) && !empty($end_time) && $startTimeInHrsMinsSecs >= $start_time && $startTimeInHrsMinsSecs <= $end_time):
+            $timeValidity = 1;
+        else:
+            $timeValidity = 0;
+        endif;
+
+        $timeValidity == 0 ? $this->with('info', 'Outside Time-Limit Range!')->redirect('checkit/index') : null;
+        is_null($_POST) && is_null($_SESSION['resume_test_data']) ? $this->with('info', 'Invalid Page Request!')->redirect('checkit/index') : null;
+        !isset($_SESSION['test_session']) || !isset($_POST) || !isset($reminder_time) ? $this->with('info', 'Invalid Page Request!')->redirect('checkit/index') : null;
+        $getTestAttempt = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test_id)->limit(1)->go();
+        if (empty($getTestAttempt)) {
+            $durationTimeInSecs = $this->helpers->minutesToSecs($duration_time);
+            $endTimeInHrsMinsSecs = date('Y-m-d H:i:s', strtotime($startTimeInHrsMinsSecs) + $durationTimeInSecs);
+            $_POST['start_time'] = $startTimeInHrsMinsSecs;
+            $_POST['end_time'] = $endTimeInHrsMinsSecs;
+            $_POST['duration_time'] = $this->helpers->minutesToHrsMins($duration_time);
+
+            // Unset un-required POST records
+            unset($_POST['reminder_time']);
+            unset($_POST['type']);
+            unset($_POST['randomize']);
+            unset($_POST['negative_marking']);
+            unset($_POST['negative_marker']);
+            unset($_POST['question_type_array']);
+            unset($_POST['ques_entry_date_start']);
+            unset($_POST['ques_entry_date_end']);
+            $insertTestAttempt = $this->add_record('ci_test_attempt', $_POST)->go();
+            if ($insertTestAttempt === true) {
+                unset($_POST);
+                // if ($randomize == 1) {
+                //     $minID = $this->get_record('ci_question', 'id')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('course_id', $course_id)->order_by('id', 'ASC')->limit(1)->go();
+                //     $maxID = $this->get_record('ci_question', 'MAX(id) AS id')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('course_id', $course_id)->go();
+                // }
+                $getQuestions = $this->get_record('ci_question');
+                // load selected question type
+                if (!empty($question_type_array)) {
+                    $pattern = "/[\[\]\"]/s";
+                    $pattern1 = "/[\"]/s";
+                    $edited_question_type_array = preg_replace($pattern, '', preg_replace($pattern1, "'", $question_type_array));
+                    $getQuestions->in_where('type', $edited_question_type_array)->and_where('org_id', $_SESSION['user_info']['org_id'])->and_where('course_id', $course_id);
+                } else {
+                    $getQuestions->where('org_id', $_SESSION['user_info']['org_id'])->and_where('course_id', $course_id);
+                }
+                // load question entry date range
+                empty($ques_entry_date_start) ? null : $getQuestions->and_where('created_at', $ques_entry_date_start . ' 24:00:00', '>=');
+                empty($ques_entry_date_end) ? null : $getQuestions->and_where('created_at', $ques_entry_date_end . ' ' . date('H:i:s'), '<=');
+                // randomly select questions from bank if == 1
+                $randomize == 1 ? $getQuestions->order_by('RAND()', '') : null;
+                // $randomize == 1 ? $getQuestions->order_by('MT_RAND(' . intVal($minID[0]['id']) . ', ' . intVal($maxID[0]['id']) . ')') : null;
+                // finanlly! select question limit
+                $getQuestions = $getQuestions->limit($total_questions)->go();
+                $testQuestionArray = '';
+                foreach ($getQuestions as $key => $value) {
+                    $testQuestionArray = $testQuestionArray . "'" . $value['question_id'] . "',";
+                }
+                $testQuestionArray = substr($testQuestionArray, 0, -1);
+                $this->helpers->manageFile($_SESSION['offlineFile'], $total_questions + 1, 0, $testQuestionArray);
+            } else { $this->redirect('dashboard/index');}
+        } else {
+            // this should pick questions from temporary server text file
+            if (file_exists($_SESSION['offlineFile'])) {
+                $savedTestQuestions = $this->helpers->readFile($_SESSION['offlineFile'], 0);
+                $getQuestions = $this->get_record('ci_question')->in_where('question_id', $savedTestQuestions)->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('FIELD(question_id, ' . $savedTestQuestions . ')', null)->go();
+                for ($i = 1; $i <= count($getQuestions); $i++) {
+                    array_push($savedTestAnswers, $this->helpers->readFile($_SESSION['offlineFile'], $i));
+                }
+            } else { $this->with('info', 'Question File Does not Exist!')->redirect('dashboard/index');}
+
+            $startTimeInHrsMinsSecs = $getTestAttempt[0]['start_time'];
+
+            // if more time exist
+            if (!empty($getTestAttempt[0]['more_time'])) {
+                $moreTimeInSecs = $this->helpers->minutesToSecs($getTestAttempt[0]['more_time']);
+                $getTestAttempt[0]['end_time'] = date('Y-m-d H:i:s', strtotime($getTestAttempt[0]['end_time']) + $moreTimeInSecs);
+                $more_time_array = ['more_time' => null, 'end_time' => $getTestAttempt[0]['end_time']];
+                $this->update_record('ci_test_attempt', $more_time_array)->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test_id)->go();
+            }
+
+            // if pause time exist
+            if (!empty($getTestAttempt[0]['pause_time'])) {
+                $durationTimeInSecs = (strtotime($getTestAttempt[0]['end_time']) - time()) - (strtotime($getTestAttempt[0]['pause_time']) - time());
+                $getTestAttempt[0]['end_time'] = date('Y-m-d H:i:s', time() + $durationTimeInSecs);
+                $pause_time_array = ['pause_time' => null, 'end_time' => $getTestAttempt[0]['end_time']];
+                $this->update_record('ci_test_attempt', $pause_time_array)->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test_id)->go();
+            } else {
+                $durationTimeInSecs = (strtotime($getTestAttempt[0]['end_time']) - time()) < 1 ? 1 : strtotime($getTestAttempt[0]['end_time']) - time();
+            }
+        }
+        if (count($getQuestions) != intVal($total_questions)) {
+            $this->with('info', 'Question(s) Not Ready!')->redirect('checkit/index');
+        } else {
+            $_SESSION['log']['note'] = 'Started Test - [' . strtoupper($name) . '][' . strtoupper($course_code) . '] Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('test_id', $test_id)->with('randomize', $randomize)->with('negative_marking', $negative_marking)->with('negative_marker', $negative_marker)->with('start_time', $startTimeInHrsMinsSecs)->with('duration_time_secs', $durationTimeInSecs)->with('reminder_time', $reminder_time)->with('total_questions', $total_questions)->with('savedTestAnswers', $savedTestAnswers)->with('getQuestions', $getQuestions)->show('resources/checkit/test');
+        }
+    }
+
+    public function save_offline($count)
+    {
+        $result = extract($_POST);
+        // $result == 0 ? $answered_stack = array_keys($_POST) : $_POST;
+        $this->helpers->manageFile($_SESSION['offlineFile'], 1, $count, json_encode($answered_stack));
+    }
+
+    public function finish($test_id = null)
+    {
+        !isset($_SESSION['test_session']) && $test_id == null ? $this->with('info', 'Invalid Page Request!')->redirect('checkit/index') : null;
+        isset($_SESSION['offlineFile']) ? $this->helpers->deleteFile($_SESSION['offlineFile']) : null;
+        $answered_stack = !isset($answered_stack) ? [] : $answered_stack;
+        $questionAnswerStatusStack = [];
+        if (isset($_SESSION['test_session'])) {
+            extract($_POST);
+            $finishTimeInHrsMinsSecs = date('Y-m-d H:i:s');
+            $points = $totalPoints = 0;
+            $pending_stack = [];
+            for ($i = 0; $i < count($question_stack); $i++) {
+                $answeredStack = '';
+                $eachQuestionScoreStack = $score_stack[$i];
+                // echo $eachQuestionScoreStack;
+                $decodedAnswerStack = json_decode(FynxCryptor::decrypt($answer_stack[$i], FYNX_CRYPTO_KEY), true);
+                $decodedIsCorrectStack = json_decode(FynxCryptor::decrypt($valid_stack[$i], FYNX_CRYPTO_KEY), true);
+                if (isset($answered_stack[$i + 1]) && is_array($answered_stack[$i + 1])) {
+                    $intersectArray = array_intersect($decodedIsCorrectStack, $answered_stack[$i + 1]);
+                    $diffArray = array_diff($decodedIsCorrectStack, $intersectArray);
+                    $result = empty($diffArray) && (count($answered_stack[$i + 1]) == count($decodedIsCorrectStack)) ? null : 'partial';
+                    if (!empty($diffArray) && count($decodedIsCorrectStack) == 1) {$result = 1;}
+                    foreach ($decodedAnswerStack as $key => $value) {
+                        in_array($key, $answered_stack[$i + 1]) ? $answeredStack = $answeredStack . $value . ', ' : null;
+                    }
+                } else {
+                    $result = isset($answered_stack[$i + 1]) && $answered_stack[$i + 1] == $decodedIsCorrectStack ? null : 1;
+                    $answeredStack = isset($answered_stack[$i + 1]) ? $answered_stack[$i + 1] . ', ' : null;
+                }
+                if (is_null($decodedIsCorrectStack) || empty($decodedIsCorrectStack)) {
+                    $status = "Pending";
+                    $colorClass = "bg-secondary";
+                    $pending_stack[$i] = [
+                        'question' => $question_stack[$i],
+                        'answer' => $answered_stack[$i + 1],
+                        'score' => $score_stack[$i],
+                    ];
+                } elseif (empty($result)) {
+                    $status = "Correct";
+                    $colorClass = "bg-success";
+                    $points = $points + $score_stack[$i];
+                } elseif ($result == 'partial') {
+                    $status = "Partially";
+                    $colorClass = "bg-warning";
+                    // $point = ($score_stack[$i] / count($decodedIsCorrectStack)) * (count($decodedIsCorrectStack) - count($result));
+                    // $points = $points + $point;
+                } else {
+                    $status = "Wrong";
+                    $colorClass = "bg-danger";
+                }
+                $questionAnswerStatusStack[$i] = [
+                    'question' => FynxCryptor::decrypt($question_stack[$i], FYNX_CRYPTO_KEY),
+                    'answered' => !empty($answeredStack) ? substr($answeredStack, 0, -2) : null,
+                    'colorClass' => $colorClass,
+                    'status' => $status,
+                ];
+                $totalPoints = $totalPoints + $score_stack[$i];
+            }
+
+            // if negative marking option is enabled
+            if ($negative_marking == 1) {
+                $points = $points - (($totalPoints - $points) * $negative_marker);
+            }
+
+            $getTest = $this->get_record('ci_test', 'course_id, course_code, grade_group, custom_grade, name, type, grade, note, duration_time_limit, total_questions, created_at')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('test_id', $test_id)->go();
+            $type = $getTest[0]['type'];
+            $course_id = $getTest[0]['course_id'];
+            $course_code = $getTest[0]['course_code'];
+            $name = $getTest[0]['name'];
+            $grade_stat = $getTest[0]['grade'];
+            $grade_group = $getTest[0]['grade_group'];
+            $custom_grade = $getTest[0]['custom_grade'];
+            $note = $getTest[0]['note'];
+            $duration_time = $getTest[0]['duration_time_limit'];
+            $total_questions = $getTest[0]['total_questions'];
+            $created_at = $getTest[0]['created_at'];
+
+            // grade using system default or your custom grades
+            if ($custom_grade == 0) {
+                $performance = round(($points / $totalPoints) * 100, 2);
+                if ($performance >= 90 && $performance <= 100) {
+                    $ranking = 'A';
+                    $color = 'text-success';
+                    $description = 'Excellent';
+                    $rating = '<i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i>';
+                } elseif ($performance >= 80 && $performance <= 89.9) {
+                    $ranking = 'B';
+                    $color = 'text-primary';
+                    $description = 'Awesome';
+                    $rating = '<i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star_half</i>';
+                } elseif ($performance >= 60 && $performance <= 79.9) {
+                    $ranking = 'C';
+                    $color = 'text-info';
+                    $description = 'Good';
+                    $rating = '<i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star_outline</i><i class="material-icons text-warning">star_outline</i>';
+                } elseif ($performance >= 50 && $performance <= 59.9) {
+                    $ranking = 'D';
+                    $color = 'text-warning';
+                    $description = 'Average';
+                    $rating = '<i class="material-icons text-warning">star</i><i class="material-icons text-warning">star</i><i class="material-icons text-warning">star_half</i><i class="material-icons text-warning">star_outline</i><i class="material-icons text-warning">star_outline</i>';
+                } else {
+                    $ranking = 'F';
+                    $color = 'text-danger';
+                    $description = 'Failed';
+                    $rating = '<i class="material-icons text-warning">star</i><i class="material-icons text-warning">star_outline</i><i class="material-icons text-warning">star_outline</i><i class="material-icons text-warning">star_outline</i><i class="material-icons text-warning">star_outline</i>';
+                }
+            } else {
+                $allCustomGrading = $this->get_record('ci_grading')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_name', $grade_group)->go();
+                $minFromPercent = min(array_column($allCustomGrading, 'from_percent'));
+                $maxToPercent = max(array_column($allCustomGrading, 'to_percent'));
+                $performance = round(($points / $totalPoints) * $maxToPercent, 2);
+                $customGrading = $this->helpers->get_test_grading($allCustomGrading, $performance);
+                $ranking = $customGrading['ranking'];
+                $color = $customGrading['color'];
+                $description = $customGrading['description'];
+                $rating = $customGrading['rating'];
+            }
+        } else {
+            $getTestAttempt = $this->get_record('ci_test_attempt')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('test_id', $test_id)->limit(1)->go();
+            if ($getTestAttempt != true) {
+                $this->with('danger', 'Wrong Test/Exam ID!')->redirect('checkit/index');
+            } else {
+                $name = $getTestAttempt[0]['name'];
+                $total_questions = $getTestAttempt[0]['total_questions'];
+                $type = 1;
+                $duration_time = $getTestAttempt[0]['duration_time'];
+                $start_time = $getTestAttempt[0]['start_time'];
+                $finishTimeInHrsMinsSecs = $getTestAttempt[0]['finish_time'];
+                $points = $getTestAttempt[0]['points'];
+                $ranking = $getTestAttempt[0]['ranking'];
+                $color = $getTestAttempt[0]['color'];
+                $description = $getTestAttempt[0]['description'];
+                $rating = $getTestAttempt[0]['rating'];
+                $performance = $getTestAttempt[0]['performance'];
+            }
+        }
+
+        $achievedDuration = strtotime($finishTimeInHrsMinsSecs) - strtotime($start_time);
+        $testAttemptData = [
+            'points' => FynxCryptor::encrypt($points, FYNX_CRYPTO_KEY),
+            'total_points' => $totalPoints,
+            'ranking' => $ranking,
+            'color' => $color,
+            'description' => $description,
+            'rating' => FynxCryptor::encrypt($rating, FYNX_CRYPTO_KEY),
+            'performance' => $performance,
+            'finish_time' => $finishTimeInHrsMinsSecs,
+            'achieved_time' => $this->helpers->secondsToHrsMinsSecs($achievedDuration),
+            'pause_time' => null,
+            'more_time' => null,
+            'question_array' => FynxCryptor::encrypt(json_encode($question_stack), FYNX_CRYPTO_KEY),
+            'answered_array' => FynxCryptor::encrypt(json_encode($answered_stack), FYNX_CRYPTO_KEY),
+            'answer_array' => $answer_stack,
+            'pending_array' => FynxCryptor::encrypt(json_encode($pending_stack), FYNX_CRYPTO_KEY),
+            'status' => 1,
+        ];
+        // $achievedDuration > $getTest[0]['duration_time_limit'] ? $achievedDuration = $getTest[0]['duration_time_limit'] : $achievedDuration;
+        if (isset($_SESSION['test_session'])) {
+            $type == 1 ? $result = $this->update_record('ci_test_attempt', $testAttemptData)->where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go() : $result = $this->delete_record('ci_test_attempt')->where('user_id', $_SESSION['user_info']['user_id'])->and_where('test_id', $test_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+            if ($result == true) {
+                unset($_SESSION['test_session']);
+                unset($_SESSION['offlineFile']);
+                unset($_SESSION['resume_test_data']);
+                $_SESSION['log']['note'] = 'Ended Test - [' . strtoupper($name) . '][' . strtoupper($course_code) . '] Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+            } else {
+                $this->redirect('dashboard/index');
+            }
+        }
+        $testAttemptData['test_id'] = $test_id;
+        $testAttemptData['start_time'] = $start_time;
+        $testAttemptData['duration_time'] = $duration_time;
+        $testAttemptData['type'] = $type;
+        $testAttemptData['course_id'] = $course_id;
+        $testAttemptData['course_code'] = $course_code;
+        $testAttemptData['name'] = $name;
+        $testAttemptData['grade_stat'] = $grade_stat;
+        $testAttemptData['note'] = $note;
+        $testAttemptData['created_at'] = isset($created_at) ? $created_at : 'NIL';
+        $testAttemptData['total_questions'] = $total_questions;
+        $this->with('testAttemptData', $testAttemptData)->with('questionAnswerStatusStack', $questionAnswerStatusStack)->show('resources/checkit/finish');
+    }
+
+    public function profile()
+    {
+        $getProfile = $this->get_record('ci_person')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->limit(1)->go();
+        $this->with('getProfile', $getProfile)->show('resources/checkit/profile');
+    }
+
+    public function update_profile()
+    {
+        extract($_POST);
+        if (isset($_FILES)) {
+            foreach ($_FILES as $key => $value) {
+                if (!empty($value['name'])) {
+                    $this->filesystem->allow_overwriting();
+                    $this->filesystem->set_input($key);
+                    $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'user-profile/');
+                    $this->filesystem->set_auto_filename('.%s');
+                    $this->filesystem->set_upload_function("copy");
+                    $this->filesystem->save();
+                    $_POST[$key] = $this->filesystem->get_info()->filename;
+                }
+            }
+        }
+        $staff_update = $this->update_record('ci_person', $_POST)->where('user_id', $_SESSION['user_info']['user_id'])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($staff_update) {
+            case false:
+                $this->with('danger', 'Account Profile Update was Unsuccessful!')->redirect('checkit/profile');
+                break;
+            default:
+                isset($_POST['img']) ? $_SESSION['user_info']['img'] = $_POST['img'] : null;
+                $_SESSION['log']['note'] = 'Account Profile Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('checkit/profile');
+                break;
+        }
+    }
+}

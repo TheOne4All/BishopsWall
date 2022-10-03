@@ -1,0 +1,28 @@
+<?php
+
+class Reports extends Processor
+{
+    public function staffs()
+    {
+        $allStaffs = $this->get_record('staffs')->go();
+        $this->with('allStaffs', $allStaffs)->show('resources/reports/staffs');
+    }
+
+    public function branches()
+    {
+        $allChurches = $this->get_record('branches')->limit(50)->go();
+        $this->with('allChurches', $allChurches)->show('resources/reports/branches');
+    }
+
+    public function activities()
+    {
+        $allActivities = $this->get_record('activities')->limit(50)->go();
+        $this->with('allActivities', $allActivities)->show('resources/reports/activities');
+    }
+
+    public function memberships()
+    {
+        $allMembers = $this->get_record('persons')->go();
+        $this->with('allMembers', $allMembers)->show('resources/reports/memberships');
+    }
+}

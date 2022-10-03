@@ -1,0 +1,81 @@
+<?php
+
+class Hr extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allStaffs = $this->get_record('staffs')->go();
+        $allRoles = $this->get_record('roles')->go();
+        $allDepartments = $this->get_record('departments')->go();
+        $allDesignations = $this->get_record('designations')->go();
+        $this->with('allStaffs', $allStaffs)->with('allRoles', $allRoles)->with('allDepartments', $allDepartments)->with('allDesignations', $allDesignations)->show('resources/hr/staffs/index');
+    }
+
+    public function add()
+    {
+        $this->add_record('staffs', $_POST)->go();
+        $this->with('success', 'Staff Added Successfully!')->redirect('hr/index');
+    }
+
+    public function addDept()
+    {
+        $this->add_record('departments', $_POST)->go();
+        $this->with('success', 'Department Added Successfully!')->with('tab', 'tab_2')->redirect('hr/index');
+    }
+
+    public function addDesig()
+    {
+        $this->add_record('designations', $_POST)->go();
+        $this->with('success', 'Designation Added Successfully!')->with('tab', 'tab_3')->redirect('hr/index');
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('staffs', $_POST)->go();
+        $this->with('danger', 'Staff Deleted Successfully!')->redirect('hr/index');
+    }
+
+    public function deleteDept()
+    {
+        extract($_POST);
+        $this->delete_record('departments', $_POST)->go();
+        $this->with('danger', 'Department Deleted Successfully!')->with('tab', 'tab_2')->redirect('hr/index');
+    }
+
+    public function deleteDesig()
+    {
+        extract($_POST);
+        $this->delete_record('designations', $_POST)->go();
+        $this->with('danger', 'Designation Deleted Successfully!')->with('tab', 'tab_3')->redirect('hr/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('staffs', $_POST)->where('employee_id', $employee_id)->go();
+        $this->with('success', 'Staff Updated Successfully!')->redirect('hr/index');
+    }
+
+    public function updateDept()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('departments', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Department Updated Successfully!')->with('tab', 'tab_2')->redirect('hr/index');
+    }
+
+    public function updateDesig()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('designations', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Designation Updated Successfully!')->with('tab', 'tab_3')->redirect('hr/index');
+    }
+}

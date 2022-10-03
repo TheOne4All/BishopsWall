@@ -1,0 +1,37 @@
+<?php
+
+class Activities extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allActivities = $this->get_record('activities')->limit(30)->go();
+        $allServiceTypes = $this->get_record('activity_type')->go();
+        $this->with('allActivities', $allActivities)->with('allServiceTypes', $allServiceTypes)->show('resources/church/activities/index');
+    }
+
+    public function add()
+    {
+        $this->add_record('activities', $_POST)->go();
+        $this->with('success', 'Service Activity Added Successfully!')->redirect('activities/index');
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('activities', $_POST)->go();
+        $this->with('danger', 'Service Activity Deleted Successfully!')->redirect('activities/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('activities', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Service Activity Updated Successfully!')->redirect('activities/index');
+    }
+}

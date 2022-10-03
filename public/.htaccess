@@ -1,0 +1,24 @@
+Options -Multiviews
+
+DirectoryIndex index.htm index.html index.php index.tpl
+
+AddType application/x-httpd-php .tpl .hook .lib .dbs .tbl
+
+RewriteEngine On 
+
+
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.+)$ index.php?url=$1 [QSA,L]
+# RewriteRule ^public/(.*)$ /$1 [L,R=301,QSA]
+
+ErrorDocument 403 /resources/pages/errors/403.tpl
+ErrorDocument 404 /resources/pages/errors/404.tpl
+ErrorDocument 500 /resources/pages/errors/500.tpl
+
+# php -- BEGIN cPanel-generated handler, do not edit
+# Set the “ea-php73” package as the default “PHP” programming language.
+<IfModule mime_module>
+  AddHandler application/x-httpd-ea-php73___lsphp .php .php7 .phtml
+</IfModule>
+# php -- END cPanel-generated handler, do not edit

@@ -1,0 +1,980 @@
+<?php
+
+class Settings extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] == 3 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+        $this->helpers = new Helpers;
+        $this->filesystem = new FynxFileSystem();
+    }
+
+    public function index()
+    {
+        $rolePermission = $_SESSION['user_info']['user_role'] == 1 ? '45' : '8';
+        if ($this->helpers->set_role_permission($rolePermission . ",0", "view") === true) {
+            $getSystemSettings = $this->get_record('ci_org')->where('unique_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+            $getSMSSettings = $this->get_record('ci_settings_sms')->where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+            $getMailSettings = $this->get_record('ci_settings_mail')->where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+            $getMainModules = $this->get_record('ci_modules_main', 'name,is_disabled_array')->in_where('main_order_id', "'3','4','5','6'")->and_where('is_admin', '1')->go();
+            $getSubModules = $this->get_record('ci_modules_sub')->where('main_order_id', $rolePermission)->and_where('tree_view_list', '1');
+            $_SESSION['user_info']['user_role'] == 1 ? $getSubModules->and_where('is_admin', 'NIL') : $getSubModules->and_where('is_admin', 1);
+            $getSubModules = $getSubModules->go();
+            $allCountries = $this->get_record('ci_country')->go();
+            $getSMSSettings = empty($getSMSSettings) ? null : $getSMSSettings[0];
+            $getMailSettings = empty($getMailSettings) ? null : $getMailSettings[0];
+            $this->with('allCountries', $allCountries)->with('getMainModules', $getMainModules)->with('getSubModules', $getSubModules)->with('getSystemSettings', $getSystemSettings[0])->with('getSMSSettings', $getSMSSettings)->with('getMailSettings', $getMailSettings)->show('resources/settings/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function system()
+    {
+        extract($_POST);
+        if (isset($_FILES['sys_logo']) && !empty($_FILES['sys_logo']['name'])) {
+            $this->filesystem->allow_overwriting();
+            $this->filesystem->set_input('sys_logo');
+            $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'front-end/');
+            // $this->filesystem->set_auto_filename('.%s');
+            $this->filesystem->set_filename($unique_id . '.%s');
+            $this->filesystem->set_upload_function("copy");
+            // Callback in before upload
+            // $this->filesystem->set_callback_input(function ($data) {
+            //     echo "<h3>Start!</h3>";
+            // });
+
+            // Callback in after upload
+            $this->filesystem->set_callback_output(function ($data) {
+                $_POST['img'] = $data->filename;
+                // echo "<h3>End!</h3>";
+                // if ($data->status === true) {
+                //     echo "<p>The " . $data->filename . " file has been uploaded</p>";
+                // } else {
+                //     echo "<p>The " . $data->filename . " file could not be uploaded to the server</p>";
+                // }
+            });
+            $this->filesystem->save();
+        }
+        $result = $this->update_record('ci_org', $_POST)->where('unique_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update System Settings was Unsuccessful!')->redirect('settings/index');
+                break;
+            default:
+                $_SESSION['org']['default_theme'] = $_POST['default_theme'];
+                if (isset($_POST['img'])) {$_SESSION['org']['img'] = $_POST['img'];}
+                $_SESSION['log']['note'] = 'System Settings Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/index');
+                break;
+        }
+    }
+
+    public function module()
+    {
+        if (!isset($_POST['disabled_modules'])) {$_POST['disabled_modules'] = [];}
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        $org_id = $_SESSION['user_info']['org_id'];
+        $modules_array = $this->helpers->unset_array_num_keys(unserialize($_POST['modules_array']));
+        $multi_update = '(CASE';
+        foreach ($modules_array as $key => $value) {
+            $current_disabled_module_data = $value['is_disabled_array'];
+            // echo $value['name'];
+            if (in_array(strtolower($value['name']), $disabled_modules)) {
+                if (!preg_match("/($org_id)/s", $value['is_disabled_array'])) {
+                    if ($current_disabled_module_data != null) {
+                        $current_disabled_module_data = $current_disabled_module_data . "," . $org_id;
+                    } else {
+                        $current_disabled_module_data = $org_id;
+                    }
+                }
+            } else {
+                array_push($disabled_modules, $value['name']);
+                if (preg_match("/($org_id)/s", $value['is_disabled_array'])) {
+                    $comma_org_id = ',' . $org_id;
+                    $current_disabled_module_data = strpos($value['is_disabled_array'], $comma_org_id) !== false ? str_replace($comma_org_id, '', $value['is_disabled_array']) : str_replace($org_id, '', $value['is_disabled_array']);
+                }
+                if ($current_disabled_module_data[0] === ',') {
+                    $current_disabled_module_data = substr($current_disabled_module_data, 1);
+                }
+            }
+
+            $multi_update = $multi_update . " WHEN name = '" . $value['name'] . "' THEN '" . $current_disabled_module_data . "' ";
+        }
+        $multi_update = $multi_update . "END)";
+        $multi_update_disabled_modules = [
+            'is_disabled_array' => $multi_update,
+        ];
+        $edited_disabled_modules_json = preg_replace($pattern, '', preg_replace($pattern1, "'", json_encode($disabled_modules)));
+        $this->update_record('ci_modules_main', $multi_update_disabled_modules, 'multi')->in_where('name', $edited_disabled_modules_json)->and_where('is_admin', 1)->go();
+        $_SESSION['list_menu_group'] = $this->get_record('ci_modules_main')->where('is_admin', 1)->and_where('is_active', '1')->go();
+        $_SESSION['log']['note'] = 'Updated Modules Permission Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/index');
+    }
+
+    public function profile()
+    {
+        if ($this->helpers->set_role_permission("8,8", "view") === true) {
+            $getProfile = $this->get_record('ci_staff')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('user_id', $_SESSION['user_info']['user_id'])->limit(1)->go();
+            $allPositions = $this->get_record('ci_roles')->not_where('role_id', 3)->go();
+            $this->with('getProfile', $getProfile)->with('allPositions', $allPositions)->show('resources/settings/profile');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function update_profile()
+    {
+        extract($_POST);
+        if (isset($_FILES)) {
+            foreach ($_FILES as $key => $value) {
+                if (!empty($value['name'])) {
+                    $this->filesystem->allow_overwriting();
+                    $this->filesystem->set_input($key);
+                    $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'user-profile/');
+                    $this->filesystem->set_auto_filename('.%s');
+                    $this->filesystem->set_upload_function("copy");
+                    $this->filesystem->save();
+                    $_POST[$key] = $this->filesystem->get_info()->filename;
+                }
+            }
+        }
+        $staff_update = $this->update_record('ci_staff', $_POST)->where('user_id', $_SESSION['user_info']['user_id'])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($staff_update) {
+            case false:
+                $this->with('danger', 'Account Profile Update was Unsuccessful!')->redirect('settings/profile');
+                break;
+            default:
+                isset($_POST['img']) ? $_SESSION['user_info']['img'] = $_POST['img'] : null;
+                $_SESSION['log']['note'] = 'Account Profile Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/profile');
+                break;
+        }
+    }
+
+    public function sms()
+    {
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $_POST['char_limit'] = empty($_POST['char_limit']) ? 160 : $_POST['char_limit'];
+        $_POST['password'] = FynxCryptor::encrypt($_POST['password'], FYNX_CRYPTO_KEY);
+        $getSMSSettings = $this->get_record('ci_settings_SMS')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        // var_dump($_POST);
+        $result = empty($getSMSSettings) ? $this->add_record('ci_settings_sms', $_POST)->go() : $this->update_record('ci_settings_sms', $_POST)->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update SMS Settings was Unsuccessful!')->redirect('settings/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'SMS Settings Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/index');
+                break;
+        }
+    }
+
+    public function mail()
+    { //extract($_POST);
+        empty($_POST['mail_method']) ? $_POST['is_active'] = $_POST['mail_method'] = '0' : $_POST['is_active'] = '1';
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $_POST['smtp_password'] = FynxCryptor::encrypt($_POST['smtp_password'], FYNX_CRYPTO_KEY);
+        $_POST['ssl_tls'] = !empty($_POST['ssl_tls']) ? FynxCryptor::encrypt($_POST['ssl_tls'], FYNX_CRYPTO_KEY) : null;
+        $getMailSettings = $this->get_record('ci_settings_mail')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        // var_dump($_POST);
+        // echo $smtp_password;
+        $result = empty($getMailSettings) ? $this->add_record('ci_settings_mail', $_POST)->go() : $this->update_record('ci_settings_mail', $_POST)->where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Mail Settings was Unsuccessful!')->redirect('settings/index');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Mail Settings Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/index');
+                break;
+        }
+    }
+
+    public function groupings($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("8,9", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allBasenames = $this->get_record('ci_category', 'base_name,group_type')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('group_type', 'ASC')->go();
+            $filter_array = 'group_id,group_type,base_name,sub_name,code,name,description,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allGroups = $this->get_record('ci_category', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allGroups->search('') : $allGroups->search($_SESSION['search_filter']['search_table']);
+            $allGroups = $allGroups->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allBasenames', $allBasenames)->with('allGroups', $allGroups)->show('resources/settings/groupings');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_group()
+    {
+        $_POST['group_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        strtoupper($_POST['code']);
+        $_POST['description'] = ucwords($_POST['description']);
+        if (empty($_POST['base_name'])) {
+            $_POST['base_name'] = $_POST['name'] = strtoupper($_POST['name']);
+        } else {
+            $_POST['sub_name'] = strtoupper($_POST['name']);
+            $_POST['name'] = $_POST['base_name'] . ' | ' . $_POST['sub_name'];
+        }
+        $group_insert = $this->add_record('ci_category', $_POST)->go();
+        if ($group_insert == false) {
+            $this->with('danger', 'Add Group Was Unsuccessful!')->redirect('settings/groupings');
+        } else {
+            $_SESSION['log']['note'] = 'Group Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/groupings');
+        }
+    }
+
+    public function update_group()
+    {
+        extract($_POST);
+        unset($_POST['group_id']);
+        strtoupper($_POST['code']);
+        $_POST['description'] = ucwords($_POST['description']);
+        if (empty($_POST['sub_name'])) {
+            $_POST['base_name'] = $_POST['name'] = strtoupper($_POST['name']);
+            $_POST['sub_name'] = null;
+        } else {
+            $_POST['sub_name'] = strtoupper($_POST['name']);
+            $_POST['name'] = $_POST['base_name'] . ' | ' . $_POST['sub_name'];
+        }
+        // var_dump($_POST);
+        $result = $this->update_record('ci_category', $_POST)->where('group_id', $group_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Group was Unsuccessful!')->redirect('settings/groupings');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Group Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/groupings');
+                break;
+        }
+    }
+
+    public function delete_group()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_group_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_group_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_group_id_json));
+            $this->delete_record('ci_category')->in_where('group_id', $edited_group_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_category', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Group(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/groupings');
+    }
+
+    public function roles($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("8,11", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $filter_array = 'role_id,name,note,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allRoles = $this->get_record('ci_roles', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allRoles->search('') : $allRoles->search($_SESSION['search_filter']['search_table']);
+            $_SESSION['user_info']['user_role'] == 1 || $_SESSION['user_info']['user_role'] == 4 ? $allRoles->and_where('is_superadmin', 1)->and_where('org_id', $_SESSION['user_info']['org_id']) : null;
+            $allRoles = $allRoles->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+
+            $getMainModules = $this->get_record('ci_modules_main')->where('is_admin', '1')->go();
+            $getSubModules = $this->get_record('ci_modules_sub')->where('is_admin', '1')->go();
+            $getRolesPermissions = $this->get_record('ci_roles_permissions')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+            $this->with('currentPage', $currentPage)->with('allRoles', $allRoles)->with('getMainModules', $getMainModules)->with('getSubModules', $getSubModules)->with('getRolesPermissions', $getRolesPermissions)->show('resources/settings/roles');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_role()
+    {
+        $_POST['role_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $role_insert = $this->add_record('ci_roles', $_POST)->go();
+        if ($role_insert == false) {
+            $this->with('danger', 'Add Role Was Unsuccessful!')->redirect('settings/roles');
+        } else {
+            $_SESSION['log']['note'] = 'Role Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/roles');
+        }
+    }
+
+    public function update_role()
+    {
+        extract($_POST);
+        unset($_POST['role_id']);
+        $result = $this->update_record('ci_roles', $_POST)->where('role_id', $role_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Role was Unsuccessful!')->redirect('settings/roles');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Role Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/roles');
+                break;
+        }
+    }
+
+    public function delete_role()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_role_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_role_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_role_id_json));
+            $this->delete_record('ci_roles')->in_where('role_id', $edited_role_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_roles', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Role(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/roles');
+    }
+
+    public function permissions()
+    {
+        extract($_POST);
+        $permissions_array = $set_permissions = [];
+        for ($i = 0; $i < count($main_order_id); $i++) {
+            array_push($permissions_array, $set_permissions = [
+                'role_id' => $role_id[$i],
+                'org_id' => $org_id[$i],
+                'main_order_id' => $main_order_id[$i],
+                'sub_order_id' => empty($sub_order_id[$i]) ? '0' : $sub_order_id[$i],
+            ]);
+            $group_permission = '';
+            for ($j = 0; $j < 4; $j++) {
+                if (isset($permission[$set_permissions['main_order_id'] . '_' . $set_permissions['sub_order_id'] . '_' . $j])) {
+                    $group_permission = $group_permission . $permission[$set_permissions['main_order_id'] . '_' . $set_permissions['sub_order_id'] . '_' . $j] . '-';
+                } else {
+                    $group_permission = $group_permission . '0-';
+                }
+            }
+            $group_permission = substr($group_permission, 0, -1);
+            if (strpos($group_permission, '1') !== false) {
+                $permissions_array[$i]['permission'] = $group_permission;
+            } else {
+                unset($permissions_array[$i]);
+            }
+        }
+        $this->delete_record('ci_roles_permissions')->where('role_id', $role_id[0])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        $this->add_record('ci_roles_permissions', $permissions_array, 'multi')->go();
+        $_SESSION['log']['note'] = 'Permission(s) Added Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/roles');
+        // echo $permission_insert;
+        // var_dump($permissions_array);
+    }
+
+    public function courses($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("8,13", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+
+            $filter_array = 'course_id,code,name,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allCourses = $this->get_record('ci_course', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allCourses->search('') : $allCourses->search($_SESSION['search_filter']['search_table']);
+            $allCourses = $allCourses->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allCourses', $allCourses)->show('resources/settings/courses');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_course()
+    {
+        $_POST['course_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $_POST['code'] = strtoupper(trim($_POST['code'], ' '));
+        $course_insert = $this->add_record('ci_course', $_POST)->go();
+        if ($course_insert == false) {
+            $this->with('danger', 'Add Course Was Unsuccessful!')->redirect('settings/courses');
+        } else {
+            $_SESSION['log']['note'] = 'Course Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/courses');
+        }
+    }
+
+    public function update_course()
+    {
+        extract($_POST);
+        unset($_POST['course_id']);
+        $_POST['code'] = strtoupper(trim($_POST['code'], ' '));
+        $result = $this->update_record('ci_course', $_POST)->where('course_id', $course_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Course was Unsuccessful!')->redirect('settings/courses');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Course Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/courses');
+                break;
+        }
+    }
+
+    public function delete_course()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_course_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_course_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_course_id_json));
+            $this->delete_record('ci_course')->in_where('course_id', $edited_course_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_course', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Course(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/courses');
+    }
+
+    public function packages($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("45,36", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+
+            $filter_array = 'id,name,features,currency,amount,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allPackages = $this->get_record('ci_license_package', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allPackages->search('') : $allPackages->search($_SESSION['search_filter']['search_table']);
+            $allPackages = $allPackages->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allPackages', $allPackages)->show('resources/settings/packages');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_package()
+    {
+        $_POST['features'] = FynxCryptor::encrypt($_POST['features'], FYNX_CRYPTO_KEY);
+        $result = $this->add_record('ci_license_package', $_POST)->go();
+        if ($result == false) {
+            $this->with('danger', 'Add Package Was Unsuccessful!')->redirect('settings/packages');
+        } else {
+            $_SESSION['log']['note'] = 'Package Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/packages');
+        }
+    }
+
+    public function update_package()
+    {
+        $_POST['features'] = FynxCryptor::encrypt($_POST['features'], FYNX_CRYPTO_KEY);
+        extract($_POST);
+        $result = $this->update_record('ci_license_package', $_POST)->where('id', $id)->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Package was Unsuccessful!')->redirect('settings/packages');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Package Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/packages');
+                break;
+        }
+    }
+
+    public function delete_package()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_course_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_course_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_course_id_json));
+            $this->delete_record('ci_license_package')->in_where('id', $edited_course_id_json)->go();
+        } else {
+            $this->delete_record('ci_license_package', $_POST)->go();
+        }
+        $_SESSION['log']['note'] = 'Package(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/packages');
+    }
+
+    public function countries($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("45,37", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+
+            $filter_array = 'id,iso2,iso3,isono,country,currency,region,rate,symbol,currency_code,phone_code';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allCountries = $this->get_record('ci_country', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allCountries->search('') : $allCountries->search($_SESSION['search_filter']['search_table']);
+            $allCountries = $allCountries->order_by('country')->go();
+
+            $this->with('currentPage', $currentPage)->with('allCountries', $allCountries)->show('resources/settings/countries');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_country()
+    {
+        $result = $this->add_record('ci_country', $_POST)->go();
+        if ($result == false) {
+            $this->with('danger', 'Add Country Was Unsuccessful!')->redirect('settings/countries');
+        } else {
+            $_SESSION['log']['note'] = 'Country Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/countries');
+        }
+    }
+
+    public function update_country()
+    {
+        extract($_POST);
+        $result = $this->update_record('ci_country', $_POST)->where('id', $id)->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Country was Unsuccessful!')->redirect('settings/countries');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Country Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/countries');
+                break;
+        }
+    }
+
+    public function delete_country()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_course_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_course_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_course_id_json));
+            $this->delete_record('ci_country')->in_where('id', $edited_course_id_json)->go();
+        } else {
+            $this->delete_record('ci_country', $_POST)->go();
+        }
+        $_SESSION['log']['note'] = 'Countrie(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/countries');
+    }
+
+    public function msgtemps($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("8,17", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $filter_array = 'message_id,sender,subject,message,type,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allMsgTemps = $this->get_record('ci_message_tpl', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allMsgTemps->search('') : $allMsgTemps->search($_SESSION['search_filter']['search_table']);
+            $allMsgTemps = $allMsgTemps->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allMsgTemps', $allMsgTemps)->show('resources/settings/msgtemps');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_msgtemp()
+    {
+        $_POST['message_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        $_POST['message'] = FynxCryptor::encrypt($_POST['message'], FYNX_CRYPTO_KEY);
+        $msgtemp_insert = $this->add_record('ci_message_tpl', $_POST)->go();
+        if ($msgtemp_insert == false) {
+            $this->with('danger', 'Add Message Was Unsuccessful!')->redirect('settings/msgtemps');
+        } else {
+            $_SESSION['log']['note'] = 'Message Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/msgtemps');
+        }
+    }
+
+    public function update_msgtemp()
+    {
+        extract($_POST);
+        unset($_POST['message_id']);
+        $_POST['message'] = FynxCryptor::encrypt($message, FYNX_CRYPTO_KEY);
+        $result = $this->update_record('ci_message_tpl', $_POST)->where('message_id', $message_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        // var_dump($result);
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Message was Unsuccessful!')->redirect('settings/msgtemps');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Message Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/msgtemps');
+                break;
+        }
+    }
+
+    public function delete_msgtemp()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_message_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_message_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_message_id_json));
+            $this->delete_record('ci_message_tpl')->in_where('message_id', $edited_message_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_message_tpl', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Message(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/msgtemps');
+    }
+
+    public function cloud($currentPage = 1, $entry = null)
+    {
+        if ($this->helpers->set_role_permission("8,18", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $allClouds = $this->get_record('ci_backup')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $this->with('currentPage', $currentPage)->with('allClouds', $allClouds)->show('resources/settings/cloud');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function backup_database()
+    {
+        $return = "";
+        $tables = "ci_backup,ci_user,ci_user_session,ci_category,ci_country,ci_course,ci_gender,ci_grading,ci_log,ci_message_tpl,ci_modules_main,ci_modules_sub,ci_org,ci_person,ci_question,ci_roles,ci_roles_permissions,ci_settings_mail,ci_settings_sms,ci_staff,ci_test,ci_test_attempt";
+        $getAllShowTbl = empty($tables) ? $this->show_table()->go('show', 'row') : explode(',', $tables);
+
+        // Cycle through each provided table
+        foreach ($getAllShowTbl as $table) {
+            $allRecords = $this->get_record($table)->where('org_id', $_SESSION['user_info']['org_id'])->go();
+            $num_fields = count($allRecords);
+
+            // First part of the output – remove the table
+            $return .= 'DROP TABLE ' . $table . ';';
+            // Second part of the output – create table
+            $getAllShowCreateTbl = $this->show_table($table)->go('show');
+            $return .= "\n\n" . $getAllShowCreateTbl[0][1] . ";\n\n";
+
+            // Third part of the output – insert values into new table
+            for ($i = 0; $i < $num_fields; $i++) {
+                $return .= 'INSERT INTO ' . $table . ' VALUES(';
+                for ($j = 0; $j < count($allRecords[$i]) / 2; $j++) {
+                    $allRecords[$i][$j] = addslashes($allRecords[$i][$j]);
+                    $allRecords[$i][$j] = preg_replace("/\n/", "\\n", $allRecords[$i][$j]);
+                    if (isset($allRecords[$i][$j])) {
+                        $return .= '"' . $allRecords[$i][$j] . '"';
+                    } else {
+                        $return .= '""';
+                    }
+                    if ($j < ((count($allRecords[$i]) / 2) - 1)) {
+                        $return .= ',';
+                    }
+                }
+                $return .= ");\n";
+            }
+            $return .= "\n\n\n";
+        }
+
+        // Generate the filename for the sql file
+        $date = date("Y-m-d");
+        $time = date("h:i:sA");
+        $fileTime = preg_replace("/:/", ".", $date . "_" . $time);
+        $file = 'dbs_backup_' . $fileTime . '.sql';
+
+        // Save the sql file
+        $handle = fopen(FYNX_PUBLIC['media'] . 'database-backup/' . $file, 'w+');
+        fwrite($handle, $return);
+        fclose($handle);
+
+        // Insert into backup table
+        $insert_backup = [
+            'cloud_id' => $this->guidv4(),
+            'org_id' => $_SESSION['user_info']['org_id'],
+            'name' => $file,
+        ];
+        $backup_insert = $this->add_record('ci_backup', $insert_backup)->go();
+        if ($backup_insert == false) {
+            $this->with('danger', 'Database Backup Was Unsuccessful!')->redirect('settings/cloud');
+        } else {
+            $_SESSION['log']['note'] = 'Database Backup (' . $file . ') Successful!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', 'Database Backup Was Successful!')->redirect('settings/cloud');
+        }
+    }
+
+    public function restore_database()
+    {
+        var_dump($_POST);
+        // // Generate filename and set error variables
+        // $filename = '_backup/' . $dbFileName;
+        // $sqlErrorText = '';
+        // $sqlErrorCode = 0;
+        // $sqlStmt = '';
+
+        // // Restore the backup, Load and explode the sql file
+        // $this->connect->select_DB(DB_NAME);
+        // $f = fopen($filename, "r+");
+        // $sqlFile = fread($f, filesize($filename));
+        // $sqlArray = explode(';', $sqlFile);
+
+        // // Process the sql file by statements
+        // foreach ($sqlArray as $stmt) {
+        //     if (strlen($stmt) > 3) {
+        //         $result = $this->connect->query($stmt);
+        //     }
+        // }
+
+        // // Print message (error or success)
+        // if ($sqlErrorCode == 0) {
+        //     print("Database restored successfully!");
+        //     print("Backup used: " . $filename);
+        // } else {
+        //     print("An error occurred while restoring backup!<br><br>\n");
+        //     print("Error code: $sqlErrorCode<br>\n");
+        //     print("Error text: $sqlErrorText<br>\n");
+        //     print("Statement:<br/> $sqlStmt<br>");
+        // }
+
+        // // Close the connection
+        // $this->connect->query("INSERT INTO logs (clientid, id, uid, name, priority, note, IP, date, time) VALUES ('{$_SESSION['clientid']}', '', '$uid', '$user_fullname', '$priority', '$desc', '$ipaddress', '$date', '$time')") or die(mysql_error());
+        // $this->connect->close_db();
+    }
+
+    public function delete_database()
+    {
+        // extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        $file_path_name = FYNX_PUBLIC['media'] . 'database-backup/' . $_POST['name'];
+        // if (isset($fynx_selected_id)) {
+        //     $unedited_backup_id_json = json_encode(explode(',', $fynx_selected_id));
+        //     $edited_backup_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_backup_id_json));
+        //     $this->delete_record('ci_backup')->in_where('cloud_id', $edited_backup_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        // } else {
+        $this->delete_record('ci_backup', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        $this->helpers->deleteFile($file_path_name);
+        // }
+        $_SESSION['log']['note'] = 'Database Backup(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/cloud');
+    }
+
+    public function download_database($filename)
+    {
+        $this->helpers->download_file(FYNX_PUBLIC['media_url'] . 'database-backup/' . $filename);
+    }
+
+    public function bulk()
+    {
+        extract($_POST);
+        $seperator = !isset($_POST['seperator']) ? ',' : $_POST['seperator'];
+        unset($_POST['seperator']);
+        $csv_array = $csv_user_array = $validate_insert = [];
+        $counter = 0;
+
+        // set schema variables by import option selected
+        switch ($csv_option) {
+            case 'examinees':
+                $filter = 'admission_no,firstname,lastname,middlename,gender,current_address,email,phone';
+                $table = 'ci_person';
+                break;
+            case 'staffs':
+                $filter = 'employee_id,firstname,lastname,middlename,gender,rfid_code,dob,date_of_joining,address,email,phone';
+                $table = 'ci_staff';
+                break;
+            case 'questions':
+                $filter = 'course_id,type,score,question,answer_stack,is_correct';
+                $table = 'ci_question';
+                break;
+
+            default:
+                # code...
+                break;
+        }
+
+        // read imported CSV file
+        $filename = $_FILES["file"]["tmp_name"];
+        if ($_FILES["file"]["size"] > 0) {
+            $file = fopen($filename, "r");
+            while (($emapData = fgetcsv($file, 10000, ",")) !== false) {
+
+                // create CSV array from CSV file cells
+                $filter_array = explode(',', $filter);
+                for ($i = 0; $i < count($filter_array); $i++) {
+                    $csv_array[$filter_array[$i]] = $emapData[$i];
+                }
+                if ($csv_option == 'questions') {
+                    $csv_array['question_id'] = $this->guidv4();
+                    $csv_array['org_id'] = $_SESSION['user_info']['org_id'];
+                    $csv_array['question'] = FynxCryptor::encrypt($csv_array['question'], FYNX_CRYPTO_KEY);
+                    $csv_array['answer_stack'] = FynxCryptor::encrypt(json_encode(explode($seperator, $csv_array['answer_stack'])), FYNX_CRYPTO_KEY);
+                    $csv_array['is_correct'] = $csv_array['type'] == 3 || $csv_array['type'] == 4 ? FynxCryptor::encrypt(json_encode($csv_array['is_correct']), FYNX_CRYPTO_KEY) : FynxCryptor::encrypt(json_encode(explode($seperator, $csv_array['is_correct'])), FYNX_CRYPTO_KEY);
+                } elseif ($csv_option == 'examinees' || $csv_option == 'staffs') {
+                    if ($csv_option == 'staffs') {$csv_array['role_id'] = 2;}
+                    // create user array
+                    $csv_user_array['user_id'] = $csv_array['user_id'] = $this->guidv4();
+                    $csv_user_array['org_id'] = $csv_array['org_id'] = $_SESSION['user_info']['org_id'];
+                    $csv_user_array['user_role'] = $csv_option == 'examinees' ? 3 : 2;
+                    $csv_user_array['user_pass'] = hash("sha512", md5("Password@1"));
+                    $csv_user_array['user_email'] = $csv_array['email'];
+                    $csv_user_array['user_phone'] = $csv_array['phone'];
+                    $csv_user_array['user_name'] = strtolower($csv_array['firstname'] . '.' . $csv_array['lastname']);
+                }
+
+                // omit to insert first line of CSV file containing the field headers
+                if ($counter > 0) {
+                    if ($csv_option == 'examinees' || $csv_option == 'staffs') {
+                        $user_insert = $this->add_record('ci_user', $csv_user_array)->go();
+                        array_push($validate_insert, $user_insert);
+                    }
+                    $import_insert = $this->add_record($table, $csv_array)->go();
+                    array_push($validate_insert, $import_insert);
+                }
+
+                // validate imported file and log to database
+                if (in_array(false, $validate_insert)) {
+                    if ($csv_option == 'examinees' || $csv_option == 'staffs') {
+                        $this->delete_record('ci_user', ['user_id' => $csv_user_array['user_id']])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+                        $this->delete_record($table, ['user_id' => $csv_array['user_id']])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+                    }
+                    $this->with('danger', ucfirst($csv_option) . ' CSV Import Was Unsuccessful!')->redirect('settings/index');
+                }
+
+                // reset CSV array and close file
+                $csv_array = $csv_user_array = [];
+                $counter++;
+            }
+        }
+        fclose($file);
+        $_SESSION['log']['note'] = ucfirst($csv_option) . ' CSV Import Successful!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/index');
+    }
+
+    public function gradings($currentPage = 1, $entry = null)
+    {
+        $allCategories = $this->get_record('ci_category', 'code,name')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_type', 'grades')->order_by('base_name,created_at', 'ASC')->go();
+        if ($this->helpers->set_role_permission("8,29", "view") === true) {
+            if (!is_null($entry)) {$_SESSION['org']['default_row_per_page'] = $entry;}
+            $filter_array = 'grading_id,group_name,from_percent,to_percent,ranking,color,rating,rating1,rating2,rating3,rating4,rating5,description,created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allGradings = $this->get_record('ci_grading', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allGradings->search('') : $allGradings->search($_SESSION['search_filter']['search_table']);
+            $allGradings = $allGradings->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('group_name,created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allCategories', $allCategories)->with('allGradings', $allGradings)->show('resources/settings/gradings');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_grading()
+    {
+        $_POST['grading_id'] = $this->guidv4();
+        $_POST['org_id'] = $_SESSION['user_info']['org_id'];
+        if (!isset($_POST['rating1'])) {$_POST['rating1'] = 'star_outline';}
+        if (!isset($_POST['rating2'])) {$_POST['rating2'] = 'star_outline';}
+        if (!isset($_POST['rating3'])) {$_POST['rating3'] = 'star_outline';}
+        if (!isset($_POST['rating4'])) {$_POST['rating4'] = 'star_outline';}
+        if (!isset($_POST['rating5'])) {$_POST['rating5'] = 'star_outline';}
+        if (isset($_POST['color'])) {$_POST['color'] = 'text-' . $_POST['color'];}
+        $rating = '<i class="material-icons text-warning">' . $_POST['rating1'] . '</i><i class="material-icons text-warning">' . $_POST['rating2'] . '</i><i class="material-icons text-warning">' . $_POST['rating3'] . '</i><i class="material-icons text-warning">' . $_POST['rating4'] . '</i><i class="material-icons text-warning">' . $_POST['rating5'] . '</i>';
+        $_POST['rating'] = FynxCryptor::encrypt($rating, FYNX_CRYPTO_KEY);
+        $grading_insert = $this->add_record('ci_grading', $_POST)->go();
+        if ($grading_insert == false) {
+            $this->with('danger', 'Add Grading Was Unsuccessful!')->redirect('settings/gradings');
+        } else {
+            $_SESSION['log']['note'] = 'Grading Added Successfully!';
+            $this->add_record('ci_log', $_SESSION['log'])->go();
+            $this->with('success', $_SESSION['log']['note'])->redirect('settings/gradings');
+        }
+    }
+
+    public function update_grading()
+    {
+        extract($_POST);
+        unset($_POST['grading_id']);
+        if (!isset($_POST['rating1'])) {$_POST['rating1'] = 'star_outline';}
+        if (!isset($_POST['rating2'])) {$_POST['rating2'] = 'star_outline';}
+        if (!isset($_POST['rating3'])) {$_POST['rating3'] = 'star_outline';}
+        if (!isset($_POST['rating4'])) {$_POST['rating4'] = 'star_outline';}
+        if (!isset($_POST['rating5'])) {$_POST['rating5'] = 'star_outline';}
+        if (isset($_POST['color'])) {$_POST['color'] = 'text-' . $_POST['color'];}
+        $rating = '<i class="material-icons text-warning">' . $_POST['rating1'] . '</i><i class="material-icons text-warning">' . $_POST['rating2'] . '</i><i class="material-icons text-warning">' . $_POST['rating3'] . '</i><i class="material-icons text-warning">' . $_POST['rating4'] . '</i><i class="material-icons text-warning">' . $_POST['rating5'] . '</i>';
+        $_POST['rating'] = FynxCryptor::encrypt($rating, FYNX_CRYPTO_KEY);
+        $result = $this->update_record('ci_grading', $_POST)->where('grading_id', $grading_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Grading was Unsuccessful!')->redirect('settings/gradings');
+                break;
+            default:
+                $_SESSION['log']['note'] = 'Grading Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('settings/gradings');
+                break;
+        }
+    }
+
+    public function delete_grading()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_grading_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_grading_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_grading_id_json));
+            $this->delete_record('ci_grading')->in_where('grading_id', $edited_grading_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_grading', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Grading(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('settings/gradings');
+    }
+}

@@ -1,0 +1,80 @@
+<?php
+
+class Finance extends Processor
+{
+
+    public function __construct()
+    {
+    }
+
+    public function index()
+    {
+        $allTransactions = $this->get_record('transaction')->go();
+        $allTransactionHeads = $this->get_record('transaction_head', 'id, trans_head, trans_type_id, narration, created_at')->go();
+        $allTransactionTypes = $this->get_record('transaction_type')->go();
+        $this->with('allTransactions', $allTransactions)->with('allTransactionHeads', $allTransactionHeads)->with('allTransactionTypes', $allTransactionTypes)->show('resources/finance/index');
+    }
+
+    public function add()
+    {
+        $this->add_record('transaction', $_POST)->go();
+        $this->with('success', 'Transaction Added Successfully!')->redirect('finance/index');
+    }
+
+    public function addHead()
+    {
+        $this->add_record('transaction_Head', $_POST)->go();
+        $this->with('success', 'Transaction Head Added Successfully!')->with('tab', 'tab_2')->redirect('finance/index');
+    }
+
+    public function addType()
+    {
+        $this->add_record('transaction_Type', $_POST)->go();
+        $this->with('success', 'Transaction Type Added Successfully!')->with('tab', 'tab_3')->redirect('finance/index');
+    }
+
+    public function delete()
+    {
+        extract($_POST);
+        $this->delete_record('transaction', $_POST)->go();
+        $this->with('danger', 'Transaction Deleted Successfully!')->redirect('finance/index');
+    }
+
+    public function deleteHead()
+    {
+        extract($_POST);
+        $this->delete_record('transaction_Head', $_POST)->go();
+        $this->with('danger', 'Transaction Head Deleted Successfully!')->with('tab', 'tab_2')->redirect('finance/index');
+    }
+
+    public function deleteType()
+    {
+        extract($_POST);
+        $this->delete_record('transaction_Type', $_POST)->go();
+        $this->with('danger', 'Transaction Type Deleted Successfully!')->with('tab', 'tab_3')->redirect('finance/index');
+    }
+
+    public function update()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('transaction', $_POST)->where('created_at', $created_at)->go();
+        $this->with('success', 'Transaction Updated Successfully!')->redirect('finance/index');
+    }
+
+    public function updateHead()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('transaction_Head', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Transaction Head Updated Successfully!')->with('tab', 'tab_2')->redirect('finance/index');
+    }
+
+    public function updateType()
+    {
+        extract($_POST);
+        $_POST['updated_at'] = date('Y-m-d H:i:s');
+        $this->update_record('transaction_Type', $_POST)->where('id', $id)->go();
+        $this->with('success', 'Transaction Updated Successfully!')->with('tab', 'tab_3')->redirect('finance/index');
+    }
+}

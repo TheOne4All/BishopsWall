@@ -1,0 +1,299 @@
+<?php
+
+use PHPMailer\PHPMailer\PHPMailer;
+
+class Hr extends Processor
+{
+
+    public function __construct()
+    {
+        $this->user = new FynxUser;
+        $session_exist = $this->user->user_session_exist($this->user->get_user_session_data());
+        if ($session_exist == false) {$this->redirect('auth/signout/disconnected');}
+        if ($this->user->idle_time() == true) {$this->redirect('auth/signout/expired');}
+
+        $_SESSION['user_info']['user_role'] == 3 ? $this->redirect('dashboard/index') : $_SESSION['user_info']['user_role'];
+
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/PHPMailer.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/Exception.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/SMTP.php';
+
+        $this->filesystem = new FynxFileSystem();
+        $this->helpers = new Helpers;
+        $this->mail = new PHPMailer(true);
+    }
+
+    public function index()
+    {
+        if ($this->helpers->set_role_permission("6,0", "view") === true) {
+            $getSubModules = $this->get_record('ci_modules_sub')->where('main_order_id', '6')->and_where('tree_view_list', '1')->go();
+            $this->with('getSubModules', $getSubModules)->show('resources/hr/index');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function staff($currentPage = 1)
+    {
+        // $allModulesGroup = $this->get_record('modules_group')->go();
+        // var_dump($allModulesGroup);
+        // $demo1 = $this->join('stv_org_staff', 'org_staff_fname, org_staff_email')->to('stv_org_user', 'org_user_name')->using('org_staff_id')->get('left');
+        // $combo = $this->join('stv_org_staff')->to('stv_org_user')->go('cross');
+        // $allStaffs = $this->get_record('stv_org_staff', 'org_staff_id, org_staff_fname, org_staff_email')->get();
+        // $allUsers = $this->get_record('stv_org_user', 'org_user_id, org_user_email')->get();
+        // $combo = $this->union($demo1)->to($allStaffs)->go('union');
+        // var_dump($allStaffs);
+        // $this->with('allStaffs', $allStaffs)->show('resources/hr/index');
+        if ($this->helpers->set_role_permission("6,1", "view") === true) {
+
+            $allMsgTemps = $this->get_record('ci_message_tpl')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $allDefaultPositions = $this->get_record('ci_roles')->where('role_id', '2')->go();
+            $allCustomPositions = $this->get_record('ci_roles')->where('org_id', $_SESSION['user_info']['org_id'])->go();
+            $allPositions = array_merge($allDefaultPositions, $allCustomPositions);
+            // var_dump($allPositions);
+            $allCourses = $this->get_record('ci_course')->where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+            $allCategories = $this->get_record('ci_category', 'name')->where('org_id', $_SESSION['user_info']['org_id'])->and_where('group_type', 'staffs')->order_by('base_name,created_at', 'ASC')->go();
+            $filter_array = 'role_id, employee_id, firstname, lastname, middlename, address, department, designation, courses_designation, work_exp, email, phone, gender, marital_status, user_id, rfid_code, contract_type, dob, date_of_joining, created_at';
+            if (isset($_POST) && !empty($_POST)) {
+                extract($_POST);
+                $_SESSION['search_filter'] = [
+                    'search_table' => $search_table,
+                ];
+            }
+
+            $allStaffs = $this->get_record('ci_staff', $filter_array);
+            !isset($_SESSION['search_filter']['search_table']) || $_SESSION['search_filter']['search_table'] == null ? $allStaffs->search('') : $allStaffs->search($_SESSION['search_filter']['search_table']);
+            $allStaffs = $allStaffs->and_where('role_id', 1, '!=')->and_where('org_id', $_SESSION['user_info']['org_id'])->order_by('created_at')->go();
+
+            $this->with('currentPage', $currentPage)->with('allStaffs', $allStaffs)->with('allCourses', $allCourses)->with('allCategories', $allCategories)->with('allMsgTemps', $allMsgTemps)->with('allPositions', $allPositions)->with('search_filter', $_SESSION['search_filter'])->show('resources/hr/staff');
+        } else { $this->with('warning', 'Unauthorized Permission!')->redirect('dashboard/index');}
+    }
+
+    public function add_staff()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($_FILES)) {
+            foreach ($_FILES as $key => $value) {
+                if (!empty($value['name'])) {
+                    $this->filesystem->allow_overwriting();
+                    $this->filesystem->set_input($key);
+                    $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'user-profile/');
+                    $this->filesystem->set_auto_filename('.%s');
+                    $this->filesystem->set_upload_function("copy");
+                    $this->filesystem->save();
+                    $img = $this->filesystem->get_info()->filename;
+                }
+            }
+        }
+        if (isset($courses_designation)) {
+            $unedited_courses_designation_json = json_encode($courses_designation);
+            $edited_courses_designation_json = preg_replace($pattern, '', preg_replace($pattern1, '', $unedited_courses_designation_json));
+        }
+        $user_array = [
+            'user_id' => $this->guidv4(),
+            'user_pass' => hash("sha512", md5("Password@1")),
+            'user_phone' => $phone,
+            'user_role' => $role_id,
+            'user_name' => strtolower($firstname . '.' . $lastname),
+            'user_email' => $email,
+            'org_id' => $_SESSION['user_info']['org_id'],
+        ];
+        $staff_array = [
+            'user_id' => $user_array['user_id'],
+            'firstname' => $firstname,
+            'lastname' => $lastname,
+            'middlename' => $middlename,
+            'role_id' => $role_id,
+            'department' => $department,
+            'designation' => $designation,
+            'courses_designation' => isset($_POST['courses_designation']) ? $edited_courses_designation_json : null,
+            'dob' => $dob,
+            'marital_status' => $marital_status,
+            'img' => isset($img) ? $img : null,
+            'gender' => $gender,
+            'address' => $address,
+            'email' => $email,
+            'phone' => $phone,
+            'employee_id' => $employee_id,
+            'org_id' => $_SESSION['user_info']['org_id'],
+            'date_of_joining' => $date_of_joining,
+            'religion' => $religion,
+            'qualification' => $qualification,
+            'work_exp' => $work_exp,
+        ];
+
+        if (is_null($staff_array['img'])) {unset($staff_array['img']);}
+        $user_insert = $this->add_record('ci_user', $user_array)->go();
+        $staff_insert = $this->add_record('ci_staff', $staff_array)->go();
+        $result = array($user_insert, $staff_insert);
+        switch ($result) {
+            case array(false, true):
+                $this->delete_record('ci_staff', ['user_id' => $user_array['user_id']])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('danger', 'Add Staff was Unsuccessful!')->redirect('hr/staff');
+                break;
+            case array(true, false):
+                $this->delete_record('ci_user', ['user_id' => $user_array['user_id']])->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+                $this->with('danger', 'Add Staff was Unsuccessful!')->redirect('hr/staff');
+                break;
+            case array(false, false):
+                $this->with('danger', 'Add Staff was Unsuccessful!')->redirect('hr/staff');
+                break;
+            default:
+                // Get email settings data of user
+                $getMailSettings = $this->get_record('ci_settings_mail')->where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+                // If SMTP method is enabled
+                if (!empty($getMailSettings) && $getMailSettings[0]['mail_method'] == 2) {
+                    // Enable SMTP debugging.
+                    $this->mail->SMTPDebug = 0;
+                    // Set PHPMailer to use SMTP.
+                    $this->mail->isSMTP();
+                    // Set SMTP host name
+                    $this->mail->Host = $getMailSettings[0]['smtp_server'];
+                    // Set this to true if SMTP host requires authentication to send email
+                    $this->mail->SMTPAuth = true;
+                    // Provide username and password
+                    $this->mail->Username = $getMailSettings[0]['smtp_username'];
+                    $this->mail->Password = FynxCryptor::decrypt($getMailSettings[0]['smtp_password'], FYNX_CRYPTO_KEY);
+                    // If SMTP requires TLS encryption then set it
+                    !empty($getMailSettings[0]['ssl_tls']) ? $this->mail->SMTPSecure = FynxCryptor::decrypt($getMailSettings[0]['ssl_tls'], FYNX_CRYPTO_KEY) : null;
+                    // Set TCP port to connect to
+                    $this->mail->Port = $getMailSettings[0]['smtp_port'];
+                }
+
+                // From email address and name
+                $this->mail->From = $_SESSION['org']['email'];
+                $this->mail->FromName = "Administrator";
+                // To address and name
+                $this->mail->addAddress($email, $firstname . " " . $lastname);
+                // Send HTML or Plain Text email
+                $this->mail->isHTML(true);
+                $this->mail->Subject = "Signin Credentials";
+                $this->mail->Body = '
+                    <div style="margin: 100px; padding: 20px; background-color: #F5F5F5;">
+                        <div style="width: 100%; margin-bottom: 20px;"><h3>Auth Credentials</h3></div>
+                        <div style="width: 100%; margin-bottom: 10px;"><b>Login URL:</b>: <em>https://thecheckit.com/public/auth/signin/' . $_SESSION['user_info']['org_id'] . '</em></div>
+                        <div style="width: 100%; margin-bottom: 10px;"><b>Username</b>: <em>' . $email . '</em></div>
+                        <div style="width: 100%; margin-bottom: 10px;"><b>Password</b>: <em>Password@1</em></div>
+                        <div style="width: 100%; margin-bottom: 10px;"><em>Note: Please change your password once you signin. Thank you</em></div>
+                    </div>';
+                // Send mail
+                // $mail_status = !$this->mail->send() ? "Mailer Error: " : "Mail Sent: ";
+                try {
+                    $this->mail->send();
+                    $mail_status = '<em class="bold">Mail Sent: </em>';
+                } catch (Exception $e) {
+                    $mail_status = '<em class="text-warning bold">Mailer Error: </em>';
+                }
+
+                isset($img) ? $_SESSION['user_info']['img'] = $img : null;
+                $_SESSION['log']['note'] = 'Staff Added Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $mail_status . $_SESSION['log']['note'])->redirect('hr/staff');
+                break;
+        }
+    }
+
+    public function delete_staff()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($fynx_selected_id)) {
+            $unedited_user_id_json = json_encode(explode(',', $fynx_selected_id));
+            $edited_user_id_json = preg_replace($pattern, '', preg_replace($pattern1, "'", $unedited_user_id_json));
+            $this->delete_record('ci_user')->in_where('user_id', $edited_user_id_json)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        } else {
+            $this->delete_record('ci_user', $_POST)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        }
+        $_SESSION['log']['note'] = 'Staff(s) Deleted Successfully!';
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with('success', $_SESSION['log']['note'])->redirect('hr/staff');
+    }
+
+    public function update_staff()
+    {
+        extract($_POST);
+        $pattern = "/[\[\]\"]/s";
+        $pattern1 = "/[\"]/s";
+        if (isset($_FILES)) {
+            foreach ($_FILES as $key => $value) {
+                if (!empty($value['name'])) {
+                    $this->filesystem->allow_overwriting();
+                    $this->filesystem->set_input($key);
+                    $this->filesystem->set_destination_directory(FYNX_PUBLIC['media'] . 'user-profile/');
+                    $this->filesystem->set_auto_filename('.%s');
+                    $this->filesystem->set_upload_function("copy");
+                    $this->filesystem->save();
+                    $_POST['img'] = $this->filesystem->get_info()->filename;
+                }
+            }
+        }
+        if (isset($_POST['courses_designation'])) {
+            $unedited_courses_designation_json = json_encode($courses_designation);
+            $edited_courses_designation_json = preg_replace($pattern, '', preg_replace($pattern1, '', $unedited_courses_designation_json));
+            $_POST['courses_designation'] = $edited_courses_designation_json;
+        }
+        $result = $this->update_record('ci_staff', $_POST)->where('user_id', $user_id)->and_where('org_id', $_SESSION['user_info']['org_id'])->go();
+        switch ($result) {
+            case false:
+                $this->with('danger', 'Update Staff was Unsuccessful!')->redirect('hr/staff');
+                break;
+            default:
+                isset($_POST['img']) ? $_SESSION['user_info']['img'] = $_POST['img'] : null;
+                $_SESSION['log']['note'] = 'Staff Updated Successfully!';
+                $this->add_record('ci_log', $_SESSION['log'])->go();
+                $this->with('success', $_SESSION['log']['note'])->redirect('hr/staff');
+                break;
+        }
+    }
+
+    public function send_message()
+    {
+        $getSmsSettings = $this->get_record('ci_settings_sms')->where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+        $getMailSettings = $this->get_record('ci_settings_mail')->where('org_id', $_SESSION['user_info']['org_id'])->limit(1)->go();
+
+        if ($_POST['message_type'] == 1) {
+
+        } else {
+            // If SMTP method is enabled
+            if (!empty($getMailSettings) && $getMailSettings[0]['mail_method'] == 2) {
+                // Enable SMTP debugging.
+                $this->mail->SMTPDebug = 0;
+                // Set PHPMailer to use SMTP.
+                $this->mail->isSMTP();
+                // Set SMTP host name
+                $this->mail->Host = $getMailSettings[0]['smtp_server'];
+                // Set this to true if SMTP host requires authentication to send email
+                $this->mail->SMTPAuth = true;
+                // Provide username and password
+                $this->mail->Username = $getMailSettings[0]['smtp_username'];
+                $this->mail->Password = FynxCryptor::decrypt($getMailSettings[0]['smtp_password'], FYNX_CRYPTO_KEY);
+                // If SMTP requires TLS encryption then set it
+                !empty($getMailSettings[0]['ssl_tls']) ? $this->mail->SMTPSecure = FynxCryptor::decrypt($getMailSettings[0]['ssl_tls'], FYNX_CRYPTO_KEY) : null;
+                // Set TCP port to connect to
+                $this->mail->Port = $getMailSettings[0]['smtp_port'];
+            }
+
+            // From email address and name
+            $this->mail->From = $_SESSION['org']['email'];
+            $this->mail->FromName = "Administrator";
+            // To address and name
+            $this->mail->addAddress($_POST['email']);
+            // Send HTML or Plain Text email
+            $this->mail->isHTML(true);
+            $this->mail->Subject = $_POST['subject'];
+            $this->mail->Body = $_POST['message_content'];
+            // Send mail
+            $_SESSION['log']['note'] = !$this->mail->send() ? "Mailer Error: " : "Mail Sent: ";
+            // try {
+            //     $this->mail->send();
+            //     $mail_status = "Mail Sent: ";
+            // } catch (Exception $e) {
+            //     $mail_status = "Mailer Error: ";
+            // }
+
+        }
+        $this->add_record('ci_log', $_SESSION['log'])->go();
+        $this->with($_SESSION['log']['note'] == "Mail Sent: " ? 'success' : 'danger', $_SESSION['log']['note'])->redirect('hr/staff');
+    }
+}

@@ -1,0 +1,369 @@
+<?php
+
+use PHPMailer\PHPMailer\PHPMailer;
+
+class Pages extends Processor
+{
+
+    public function __construct()
+    {
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/PHPMailer.php';
+        require_once FYNX_PUBLIC['system'] . 'libraries/phpmailer/src/Exception.php';
+        $this->mail = new PHPMailer(true);
+    }
+
+    public function landing($sent = null)
+    {
+        $allLicensePackages = $this->get_record('ci_license_package')->go();
+        $this->with('sent', $sent)->with('allLicensePackages', $allLicensePackages)->show('resources/pages/landing');
+    }
+
+    public function create_db()
+    {
+        FYNX_APP['installation'] !== false ? $this->show('resources/auth/signin') : null;
+        extract($_POST);
+        $configFileContent = "<?php
+
+        return [
+
+            /*
+            |--------------------------------------------------------------------------
+            | Default Database Connection Name
+            |--------------------------------------------------------------------------
+            |
+            | Here you may specify which of the database connections below you wish
+            | to use as your default connection for all database work. Of course
+            | you may use many connections at once using the Database library.
+            |
+             */
+
+            'default_db' => 'mysqli',
+
+            /*
+            |--------------------------------------------------------------------------
+            | Database Connections
+            |--------------------------------------------------------------------------
+            |
+            | Here are each of the database connections setup for your application.
+            | Configuring each database platform that is supported by fynx is showm
+            | below to make development simple.
+            |
+            |
+            | All database work in fynx is done through the PHP PDO facilities
+            | so make sure you have the driver for your particular database of
+            | choice installed on your machine before you begin development.
+            |
+             */
+
+            'connections' => [
+
+                'sqlite' => [
+                    'driver' => 'sqlite',
+                    // 'database' => env('DB_DATABASE', database_path('database.sqlite')),
+                    'prefix' => '',
+                ],
+
+                'mysqli' => [
+                    'driver' => 'mysql',
+                    'charset' => 'utf8mb4',
+                    'collation' => 'utf8mb4_unicode_ci',
+                    'prefix' => '',
+                    'strict' => true,
+                    'engine' => null,
+                    'db_filename' => 'mysqliDB',
+                    'db_file_extension' => '.lib',
+                    'db_file_directory' => null,
+                    'db_engine_directory' => null,
+                    'db_class_name' => 'MySQLiDB',
+                    'db_user' => '" . $dbUser . "',
+                    'db_pass' => '" . $dbPass . "',
+                    'db_host' => '" . $dbHost . "',
+                    'db_name' => '',
+                    'db_show_errors' => true,
+                ],
+
+                'pgsql' => [
+                    'driver' => 'pgsql',
+                    'charset' => 'utf8',
+                    'prefix' => '',
+                    'schema' => 'public',
+                    'sslmode' => 'prefer',
+                ],
+
+                'sqlsrv' => [
+                    'driver' => 'sqlsrv',
+                    'charset' => 'utf8',
+                    'prefix' => '',
+                ],
+
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | Default Language
+            |--------------------------------------------------------------------------
+            |
+            | Here you may specify which of the database connections below you wish
+            | to use as your default connection for all database work. Of course
+            | you may use many connections at once using the Database library.
+            |
+             */
+
+            'default_lang' => 'en-uk',
+
+            /*
+            |--------------------------------------------------------------------------
+            | Default Language
+            |--------------------------------------------------------------------------
+            |
+            | Here you may specify which of the database connections below you wish
+            | to use as your default connection for all database work. Of course
+            | you may use many connections at once using the Database library.
+            |
+             */
+            'date_time_format' => [
+                '{yyyy}' => 'Y', // A four digit representation of a year (2022)
+                '{yy}' => 'y', // A two digit representation of a year (22)
+                '{m}' => 'n', // A numeric representation of a month, without leading zeros (1)
+                '{mm}' => 'm', // A numeric representation of a month, with leading zeros (01)
+                '{mmm}' => 'M', // A three letter textual representation of a month (Jan)
+                '{mmmm}' => 'F', // A full textual representation of a month (January)
+                '{d}' => 'j', // A numeric representation of a day, without leading zeros (6)
+                '{dd}' => 'd', // A numeric representation of a day, with leading zeros (06)
+                '{ddd}' => 'D', // A three letter textual representation of a day (Mon)
+                '{dddd}' => 'l', // A full textual representation of a day (Monday)
+                '{hr}' => 'g', // A 12-hour format of an hour, without leading zero (4)
+                '{12hr}' => 'g', // A 12-hour format of an hour, without leading zero (4)
+                '{24hr}' => 'G', // A 24-hour format of an hour, without leading zero (16)
+                '{hour}' => 'h', // A 12-hour format of an hour, with leading zero (04)
+                '{12hour}' => 'h', // A 12-hour format of an hour, with leading zero (04)
+                '{24hour}' => 'H', // A 24-hour format of an hour, with leading zero (16)
+                '{min}' => 'i', // A format of a minute, with leading zero (04)
+                '{sec}' => 's', // A format of a second, with leading zero (08)
+                '{AM/PM}' => 'A', // Uppercase AM or PM
+                '{am/pm}' => 'a', // lowercase am or pm
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | Default Language
+            |--------------------------------------------------------------------------
+            |
+            | Here you may specify which of the database connections below you wish
+            | to use as your default connection for all database work. Of course
+            | you may use many connections at once using the Database library.
+            |
+             */
+            'config' => [
+                'system' => 'sys.cfg',
+                'user' => 'user.cfg',
+                'application' => 'app.cfg',
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | System Logger
+            |--------------------------------------------------------------------------
+            |
+            | Here you may specify which of the database connections below you wish
+            | to use as your default connection for all database work. Of course
+            | you may use many connections at once using the Database library.
+            |
+             */
+            'system_logger' => [
+                // Activate logging
+                'activate' => true,
+                // Default is 10MB
+                'file_size' => 1000000,
+                'format' => [
+                    'date_time' => '{yyyy}-{mm}-{dd} {12hr}:{mm}:{sec}',
+                    'message' => '[{log_datetime}] [{log_filename}] [{log_level}]: {log_message}',
+                    'filename' => 'syslog',
+
+                ],
+                'level' => [
+                    0 => 'alert',
+                    1 => 'critical',
+                    2 => 'debug',
+                    3 => 'emergency',
+                    4 => 'error',
+                    5 => 'info',
+                    6 => 'notice',
+                    7 => 'warning',
+                ],
+            ],
+        ];";
+
+        // if (file_exists($configPath)) {
+        //     if (!is_writable($configPath)) {$dbCreated = 'No write permission to file';
+        //     } else {
+        //         $this->write_file($configPath, $configFileContent);
+        //         $db = $this->connector();
+        //         if (!$db->select_db($dbPref . $dbName)) {
+        //             $createDb = $db->query("CREATE DATABASE IF NOT EXISTS `" . $dbPref . $dbName . "`");
+        //             if ($createDb) {
+        //                 $configFileContent = str_replace("'db_name' => '',", "'db_name' => '" . $dbPref . $dbName . "',", $configFileContent);
+        //                 $this->write_file($configPath, $configFileContent);
+        //                 $dbCreated = json_encode(true);
+        //             } else { $dbCreated = 'Unable to create database!';}
+        //         } else { $dbCreated = true;}
+        //     }
+        // } else { $dbCreated = 'File does not exist';}
+        // echo $dbCreated;
+
+        if (file_exists(FYNX_SYSTEM['configs'] . 'sys.cfg')) {
+            if (!is_writable(FYNX_SYSTEM['configs'] . 'sys.cfg')) {$dbCreated = 'No write permission to file';
+            } else {
+                $this->write_file(FYNX_SYSTEM['configs'], 'sys.cfg', $configFileContent);
+                $selectDbName = $this->select_database(['db_host' => $dbHost, 'db_user' => $dbUser, 'db_pass' => $dbPass], $dbPref . $dbName);
+                $dbCreated = $selectDbName != true ? json_encode(true) : $selectDbName;
+                $configFileContent = str_replace("'db_name' => '',", "'db_name' => '" . $dbPref . $dbName . "',", $configFileContent);
+                $this->write_file(FYNX_SYSTEM['configs'], 'sys.cfg', $configFileContent);
+            }
+        } else { $dbCreated = 'File does not exist';}
+        echo $dbCreated;
+    }
+
+    public function create_tbl()
+    {
+        FYNX_APP['installation'] !== false ? $this->show('resources/auth/signin') : null;
+        $SQLPath = FYNX_PUBLIC['media'] . 'database-backup/data.sql';
+
+        if (file_exists($SQLPath)) {
+            $SQLContent = @file_get_contents($SQLPath, true);
+            $replace = array(
+                '{db-engine}' => 'InnoDB',
+                '{db-charset}' => 'utf8',
+            );
+            foreach ($replace as $find => $value) {
+                $SQLContent = str_replace($find, $value, $SQLContent);
+            }
+            $db = $this->connector();
+            $createTbl = $this->run_sql($SQLContent, $db);
+            $dbCreated = $createTbl == true ? json_encode(true) : 'Unable to create database tables';
+        } else { $dbCreated = 'File does not exist';}
+        echo $dbCreated;
+    }
+
+    public function create_act()
+    {
+        FYNX_APP['installation'] !== false ? $this->show('resources/auth/signin') : null;
+        extract($_POST);
+        $SQLPath = FYNX_PUBLIC['media'] . 'database-backup/user.sql';
+
+        if (file_exists($SQLPath)) {
+            $SQLContent = @file_get_contents($SQLPath, true);
+            $replace = array(
+                '{admin-user}' => $username,
+                '{admin-pass}' => hash("sha512", md5($password)),
+                '{admin-email}' => $email,
+                '{register-date}' => date('Y-m-d h:i:s'),
+            );
+            $_SESSION['data']['email'] = $email;
+            foreach ($replace as $find => $value) {
+                $SQLContent = str_replace($find, $value, $SQLContent);
+            }
+            $db = $this->connector();
+            $createAct = $this->run_sql($SQLContent, $db);
+            $dbCreated = $createAct == true ? json_encode(true) : 'Unable to create user account';
+        } else { $dbCreated = 'File does not exist';}
+        echo $dbCreated;
+    }
+
+    public function finish()
+    {
+        $db = $this->connector();
+        $operatingSystemtime = $db->generate_code(15) . '-' . date('Y-m-d h:i:s');
+        $successfulTimeStampcode = FynxCryptor::encrypt($operatingSystemtime . '-' . $_SESSION['data']['email'], $operatingSystemtime);
+        $genCodeX = FynxCryptor::encrypt($operatingSystemtime, $operatingSystemtime . '-' . $_SESSION['data']['email']);
+        $org_array = [
+            'license' => $genCodeX,
+        ];
+        $this->update_record('ci_org', $org_array)->where('unique_id', 'ORG')->go();
+        $root = explode('/', $_SERVER['DOCUMENT_ROOT']);
+        $searchResultOS = $this->searchOS(strtolower(php_uname()));
+        switch ($searchResultOS) {
+            case 'windows':
+                $dir = $root[0] . 'Windows/System32/files/';
+                break;
+            case 'mac':
+                $dir = $root[0] . '/mac/files/';
+                break;
+            case 'unix':
+            case 'linux':
+                $dir = $root[0] . '/etc/unix/files/';
+                break;
+        }
+        if ($this->write_file($dir, 'os_install_time.txt', $successfulTimeStampcode) == true) {
+            if (file_exists(FYNX_SYSTEM['configs'] . 'app.cfg')) {
+                $configFileContent = @file_get_contents(FYNX_SYSTEM['configs'] . 'app.cfg', true);
+                $configFileContent = str_replace("'installation' => false,", "'installation' => '" . $genCodeX . "',", $configFileContent);
+                $fileCreated = $this->write_file(FYNX_SYSTEM['configs'], 'app.cfg', $configFileContent) == true ? json_encode(true) : 'Unable to write to file';
+            } else { $fileCreated = 'File does not exist';}
+        } else { $fileCreated = 'Unable to create file';}
+        unset($_SESSION['data']);
+        echo $fileCreated;
+    }
+
+    private function write_file($path, $file, $content)
+    {
+        if (!is_dir($path)) {
+            if (!mkdir($path, 0777, true)) {return false;}
+        }
+
+        $openFile = @fopen($path . $file, 'wb');
+        @fwrite($openFile, $content);
+        @fclose($openFile);
+        @chmod($path . $file, 0666);
+        return true;
+    }
+
+    private function run_sql($SQLContent, $conn)
+    {
+        $SQL = explode(';', $SQLContent);
+        foreach ($SQL as $queryString) {
+
+            if (!empty($queryString)) {
+
+                $result = $conn->query($queryString);
+                if (!$result) {
+                    return 'Query execution terminated';
+                }
+            }
+        }
+        return true;
+    }
+
+    private function searchOS($text = null)
+    {
+        $os = ['windows', 'mac', 'unix'];
+        foreach ($os as $value) {
+            if (strpos($text, $value) !== false) {
+                return $value;
+            }
+        }
+        return null;
+    }
+
+    public function feedback()
+    {
+        if (!isset($_POST) || empty($_POST)) {
+            $this->redirect('pages/landing/#contact');
+        } else {
+            extract($_POST);
+            // From email address and name
+            $this->mail->From = $email;
+            $this->mail->FromName = $name;
+            // To address and name
+            $this->mail->addAddress('feedback@thecheckit.com', 'Support');
+            // Send HTML or Plain Text email
+            $this->mail->isHTML(true);
+            $this->mail->Subject = "Customer Feedback";
+            $this->mail->Body = $message;
+            // Send E-mail ";
+            $sent = !$this->mail->send() ? 0 : 1;
+
+            $this->redirect('pages/landing/' . $sent . '/#contact');
+        }
+    }
+}
